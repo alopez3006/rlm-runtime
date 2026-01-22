@@ -17,6 +17,12 @@ from rlm.core.types import (
     ToolResult,
     TrajectoryEvent,
 )
+from rlm.core.exceptions import (
+    MaxDepthExceeded,
+    ToolBudgetExhausted,
+    ToolNotFoundError,
+    ToolExecutionError,
+)
 
 if TYPE_CHECKING:
     from rlm.backends.base import BaseBackend, Tool
@@ -156,7 +162,18 @@ class RLM:
                     "Install with: pip install rlm-runtime[docker]"
                 )
 
-        raise ValueError(f"Unknown environment: {environment}. Supported: local, docker")
+        if environment == "wasm":
+            try:
+                from rlm.repl.wasm import WasmREPL
+
+                return WasmREPL(timeout=self.config.docker_timeout)
+            except ImportError:
+                raise ImportError(
+                    "WebAssembly support requires 'pyodide' package. "
+                    "Install with: pip install pyodide-py"
+                )
+
+        raise ValueError(f"Unknown environment: {environment}. Supported: local, docker, wasm")
 
     def _register_builtin_tools(self) -> None:
         """Register builtin tools."""
@@ -306,11 +323,11 @@ class RLM:
 
         # Check depth limit
         if depth >= options.max_depth:
-            raise RuntimeError(f"Max recursion depth ({options.max_depth}) exceeded")
+            raise MaxDepthExceeded(depth=depth, max_depth=options.max_depth)
 
         # Check subcall limit
         if len(events) >= options.max_subcalls:
-            raise RuntimeError(f"Max subcalls ({options.max_subcalls}) exceeded")
+            raise MaxDepthExceeded(depth=len(events), max_depth=options.max_subcalls)
 
         # Get available tools
         tools = self.tool_registry.get_all()
@@ -403,9 +420,11 @@ class RLM:
         try:
             tool = self.tool_registry.get(tool_call.name)
             if tool is None:
+                available = [t.name for t in self.tool_registry.get_all()]
+                error = ToolNotFoundError(tool_call.name, available)
                 return ToolResult(
                     tool_call_id=tool_call.id,
-                    content=f"Error: Unknown tool '{tool_call.name}'",
+                    content=str(error),
                     is_error=True,
                 )
 
@@ -417,11 +436,19 @@ class RLM:
                 content=str(result),
             )
 
-        except Exception as e:
+        except ToolExecutionError as e:
             logger.error("Tool execution failed", tool=tool_call.name, error=str(e))
             return ToolResult(
                 tool_call_id=tool_call.id,
-                content=f"Error executing {tool_call.name}: {e}",
+                content=str(e),
+                is_error=True,
+            )
+        except Exception as e:
+            logger.error("Tool execution failed", tool=tool_call.name, error=str(e))
+            error = ToolExecutionError(tool_call.name, str(e), tool_call.arguments)
+            return ToolResult(
+                tool_call_id=tool_call.id,
+                content=str(error),
                 is_error=True,
             )
 

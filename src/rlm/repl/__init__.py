@@ -15,3 +15,11 @@ try:
     __all__.append("DockerREPL")
 except ImportError:
     pass
+
+# WebAssembly REPL is optional - only import if pyodide is available
+try:
+    from rlm.repl.wasm import WasmREPL
+
+    __all__.append("WasmREPL")
+except ImportError:
+    pass

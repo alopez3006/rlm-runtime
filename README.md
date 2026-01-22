@@ -9,7 +9,10 @@ RLM Runtime enables LLMs to recursively decompose tasks, execute real code in is
 - **Recursive Completion** - LLMs can spawn sub-calls, execute code, and aggregate results
 - **Sandboxed REPL** - Local (RestrictedPython) or Docker isolation
 - **Multi-Provider** - OpenAI, Anthropic, and 100+ providers via LiteLLM
+- **Streaming** - Real-time token streaming for simple completions
 - **Trajectory Logging** - Full execution traces in JSONL format
+- **Trajectory Visualizer** - Interactive Streamlit dashboard for debugging
+- **MCP Server** - Claude Desktop/Code integration with multi-project support
 - **Plugin System** - Extend with custom tools
 - **Snipara Integration** - Optional context optimization (recommended)
 
@@ -303,6 +306,28 @@ Each event includes:
 - `prompt`, `response` - Input/output
 - `tool_calls`, `tool_results` - Tool usage
 - `token_usage`, `duration_ms` - Metrics
+
+## Trajectory Visualizer
+
+Debug and analyze execution trajectories with the interactive web UI:
+
+```bash
+# Install visualizer dependencies
+pip install rlm-runtime[visualizer]
+
+# Launch the dashboard
+rlm visualize
+
+# Custom log directory and port
+rlm visualize --dir ./logs --port 8502
+```
+
+The visualizer provides:
+- **Execution Tree** - Visual graph of recursive calls
+- **Token Charts** - Input/output token usage per call
+- **Duration Analysis** - Timing breakdown across calls
+- **Tool Distribution** - Pie chart of tool call frequency
+- **Event Inspector** - Detailed view of each call with prompts/responses
 
 ## API Reference
 
