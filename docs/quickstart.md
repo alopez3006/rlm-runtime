@@ -17,6 +17,12 @@ pip install rlm-runtime[mcp]
 # With Snipara context optimization
 pip install rlm-runtime[snipara]
 
+# With WebAssembly support (no Docker required)
+pip install rlm-runtime[wasm]
+
+# With trajectory visualizer
+pip install rlm-runtime[visualizer]
+
 # Everything
 pip install rlm-runtime[all]
 ```
@@ -169,6 +175,40 @@ Or in Python:
 rlm = RLM(environment="docker")
 ```
 
+## WebAssembly Isolation
+
+For environments without Docker, use WebAssembly:
+
+```bash
+# Install WebAssembly support
+pip install rlm-runtime[wasm]
+
+# Run with WebAssembly isolation
+rlm run --env wasm "Process the data"
+```
+
+Or in Python:
+
+```python
+rlm = RLM(environment="wasm")
+```
+
+The WebAssembly environment uses Pyodide to run Python in a sandboxed WebAssembly runtime, providing isolation without requiring Docker.
+
+## Streaming Completions
+
+For real-time output, use streaming:
+
+```python
+async def main():
+    rlm = RLM(model="gpt-4o-mini")
+
+    async for chunk in rlm.stream("Write a haiku about coding"):
+        print(chunk, end="", flush=True)
+```
+
+Note: Streaming is for simple completions. Tool-using completions use the standard `completion()` method.
+
 ## Viewing Logs
 
 ```bash
@@ -181,6 +221,27 @@ rlm logs abc123-def456
 # JSON output for scripting
 rlm logs --json
 ```
+
+## Trajectory Visualizer
+
+Debug your completions with the web-based visualizer:
+
+```bash
+# Install visualizer dependencies
+pip install rlm-runtime[visualizer]
+
+# Launch the dashboard
+rlm visualize
+
+# Custom port and log directory
+rlm visualize --dir ./my-logs --port 8080
+```
+
+The visualizer shows:
+- Execution tree of recursive calls
+- Token usage charts
+- Tool call distribution
+- Detailed event inspection
 
 ## Next Steps
 

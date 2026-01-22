@@ -37,6 +37,12 @@ RLM Runtime is a local-first execution environment for Recursive Language Models
 │                                 │  │  - Resource limits      │              │
 │                                 │  │  - Network disabled     │              │
 │                                 │  └─────────────────────────┘              │
+│                                 │  ┌─────────────────────────┐              │
+│                                 │  │  WebAssembly REPL       │              │
+│                                 │  │  - Pyodide sandbox      │              │
+│                                 │  │  - No Docker needed     │              │
+│                                 │  │  - Portable             │              │
+│                                 │  └─────────────────────────┘              │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Tool Registry                                                              │
 │  ├── Builtin: execute_code, file_read, list_files                          │
@@ -87,12 +93,27 @@ backend = LiteLLMBackend(model="claude-3-sonnet-20240229")
 
 ### REPL Environments
 
-Two execution environments are provided:
+Three execution environments are provided:
 
 | Environment | Isolation | Speed | Use Case |
 |-------------|-----------|-------|----------|
 | **Local** | Limited (RestrictedPython) | Fast | Development, trusted code |
 | **Docker** | Full (container) | Slower | Production, untrusted code |
+| **WebAssembly** | Full (Pyodide sandbox) | Medium | Browser/serverless, portable |
+
+#### WebAssembly REPL
+
+The WebAssembly environment uses Pyodide to run Python in a sandboxed WebAssembly runtime:
+
+```python
+rlm = RLM(environment="wasm")
+```
+
+Features:
+- **Full isolation** - Runs in WebAssembly sandbox
+- **No Docker required** - Works anywhere WebAssembly runs
+- **Package installation** - Supports micropip for pure-Python packages
+- **Portable** - Same execution across platforms
 
 ### Tool System
 
@@ -175,6 +196,35 @@ rlm logs              # Recent trajectories
 rlm logs abc-123      # Specific trajectory
 ```
 
+## Streaming
+
+RLM supports streaming completions for real-time output:
+
+```python
+async for chunk in rlm.stream("Write a story about a robot"):
+    print(chunk, end="", flush=True)
+```
+
+Note: Streaming is for simple completions without tool use. For tool-using completions, use the standard `completion()` method.
+
+## Trajectory Visualizer
+
+The trajectory visualizer provides a web-based dashboard for debugging:
+
+```bash
+# Launch visualizer
+rlm visualize
+
+# Custom port and log directory
+rlm visualize --dir ./my-logs --port 8080
+```
+
+Features:
+- **Execution tree** - Visual representation of recursive calls
+- **Token usage** - Charts showing token consumption
+- **Tool analysis** - Breakdown of tool calls and timing
+- **Event inspector** - Detailed view of each execution step
+
 ## Plugin System
 
 ### Snipara Integration
@@ -219,6 +269,46 @@ The MCP (Model Context Protocol) server enables Claude Desktop and Claude Code t
 │  ├── LocalREPL: Persistent sandboxed execution             │
 │  └── Tool handlers: execute_python, run_completion, etc.   │
 └─────────────────────────────────────────────────────────────┘
+```
+
+## Error Handling
+
+RLM uses a comprehensive exception hierarchy for clear error handling:
+
+```
+RLMError (base)
+├── Budget Errors
+│   ├── MaxDepthExceeded
+│   ├── TokenBudgetExhausted
+│   ├── ToolBudgetExhausted
+│   └── TimeoutExceeded
+├── REPL Errors
+│   ├── REPLExecutionError
+│   ├── REPLTimeoutError
+│   ├── REPLImportError
+│   └── REPLSecurityError
+├── Tool Errors
+│   ├── ToolNotFoundError
+│   ├── ToolExecutionError
+│   └── ToolValidationError
+├── Backend Errors
+│   ├── BackendConnectionError
+│   ├── BackendRateLimitError
+│   └── BackendAuthError
+└── Config Errors
+    ├── ConfigNotFoundError
+    └── ConfigValidationError
+```
+
+All exceptions include context for debugging:
+
+```python
+from rlm.core.exceptions import MaxDepthExceeded
+
+try:
+    result = await rlm.completion(prompt)
+except MaxDepthExceeded as e:
+    print(f"Recursion limit: depth={e.depth}, max={e.max_depth}")
 ```
 
 ### Project Context
