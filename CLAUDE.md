@@ -163,18 +163,139 @@ pytest --cov=src/rlm tests/
 4. **Lint** with `ruff check src/`
 5. **Commit** with descriptive messages
 
-## Snipara Integration
+## Using rlm-runtime-mcp with Snipara
 
-For context retrieval, use snipara-mcp separately:
+Both MCP servers work together in Claude Code for powerful workflows:
+
+```
+Claude Code
+    │
+    ├── rlm-runtime-mcp (code sandbox)
+    │   └── execute_python, get/set_repl_context
+    │
+    └── snipara-mcp (context retrieval, OAuth)
+        └── context_query, search, shared_context
+```
+
+### Setup
 
 ```bash
-pip install snipara-mcp
-snipara-mcp-login      # OAuth Device Flow (browser)
+# Install both
+pip install rlm-runtime[mcp] snipara-mcp
+
+# Authenticate with Snipara (OAuth - no API key copying)
+snipara-mcp-login      # Opens browser
 snipara-mcp-status     # Check auth status
-snipara-mcp-logout     # Clear tokens
 ```
 
 Tokens stored at `~/.snipara/tokens.json`.
+
+### Complex Use Cases
+
+#### 1. Code Generation with Project Conventions
+
+When generating code that must follow project patterns:
+
+```
+User: "Add a new API endpoint for user preferences"
+
+Claude workflow:
+1. [snipara: context_query] → Get existing endpoint patterns
+2. [snipara: shared_context] → Get team coding standards
+3. [rlm: execute_python] → Validate generated code structure
+4. Generate code following discovered patterns
+```
+
+#### 2. Data Analysis with Documentation Context
+
+When analyzing data that requires domain knowledge:
+
+```
+User: "Analyze the sales data and identify anomalies"
+
+Claude workflow:
+1. [snipara: context_query] → Get data schema documentation
+2. [snipara: search] → Find business rules for anomaly detection
+3. [rlm: execute_python] → Run statistical analysis
+4. [rlm: set_repl_context] → Store intermediate results
+5. [rlm: execute_python] → Generate visualizations
+6. Synthesize findings with domain context
+```
+
+#### 3. Architecture Review with Code Verification
+
+When reviewing code changes against architecture:
+
+```
+User: "Review this PR for architectural compliance"
+
+Claude workflow:
+1. [snipara: context_query] → Get architecture guidelines
+2. [snipara: shared_context categories=["MANDATORY"]] → Get required patterns
+3. [rlm: execute_python] → Parse and analyze code structure
+4. Compare against architectural rules
+5. Generate compliance report
+```
+
+#### 4. Algorithm Implementation with Testing
+
+When implementing algorithms that need verification:
+
+```
+User: "Implement the pricing algorithm from our spec"
+
+Claude workflow:
+1. [snipara: context_query] → Get pricing specification
+2. [snipara: search] → Find test cases from documentation
+3. [rlm: execute_python] → Implement algorithm
+4. [rlm: set_repl_context] → Store implementation
+5. [rlm: execute_python] → Run test cases
+6. Iterate until tests pass
+```
+
+#### 5. Debugging with Context-Aware Analysis
+
+When debugging requires understanding system behavior:
+
+```
+User: "Debug why user authentication is failing"
+
+Claude workflow:
+1. [snipara: context_query] → Get auth system documentation
+2. [snipara: search pattern="error|exception"] → Find error handling patterns
+3. [rlm: execute_python] → Reproduce and analyze error
+4. [rlm: execute_python] → Test fix hypotheses
+5. Provide solution with documentation references
+```
+
+### When to Use Each MCP
+
+| Task Type | Use rlm-runtime-mcp | Use snipara-mcp |
+|-----------|---------------------|-----------------|
+| Math/calculations | ✅ | |
+| Data processing | ✅ | |
+| Algorithm verification | ✅ | |
+| Code structure analysis | ✅ | |
+| Understanding codebase | | ✅ |
+| Finding patterns | | ✅ |
+| Team best practices | | ✅ |
+| Domain knowledge | | ✅ |
+| **Complex tasks** | ✅ + ✅ | ✅ + ✅ |
+
+### Snipara Tools Reference
+
+| Tool | Purpose |
+|------|---------|
+| `context_query` | Semantic search for relevant documentation |
+| `search` | Regex pattern search across docs |
+| `sections` | List available documentation sections |
+| `shared_context` | Get team guidelines and best practices |
+
+### Project Configuration
+
+For this project (rlm-runtime), Snipara is configured with:
+- **Project ID**: `cmkqwxi7c0007kq0nsf944wpr`
+- **Auth**: OAuth tokens at `~/.snipara/tokens.json`
 
 ## Key Files for Common Tasks
 
