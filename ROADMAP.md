@@ -34,8 +34,8 @@ Production-ready release infrastructure.
 | PyPI Release Workflow | ✅ | Automated publishing via trusted publishing |
 | Streaming Support | ✅ | Real-time token streaming via `rlm.stream()` |
 | Trajectory Visualizer | ✅ | Streamlit dashboard for debugging |
-| Error Handling | 🔄 | Custom exception hierarchy |
-| Test Coverage 90%+ | 🔄 | Comprehensive test suite |
+| Error Handling | ✅ | Custom exception hierarchy |
+| Test Coverage 90%+ | 🔄 | Currently at 87% (462 tests) |
 
 ---
 
@@ -47,8 +47,9 @@ More isolation and execution options.
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| WebAssembly REPL | 🔄 | Browser-safe execution via Pyodide |
-| Resource Quotas | ⏳ | Fine-grained CPU/memory/time limits |
+| WebAssembly REPL | ✅ | Browser-safe execution via Pyodide |
+| Resource Quotas | ✅ | CPU/memory tracking in LocalREPL, limits in DockerREPL |
+| Docker Resource Reporting | 🔄 | Report actual usage (not just limits) from containers |
 | Remote Execution | ⏳ | Execute on RunPod/Modal/Lambda |
 | Kubernetes Pods | ⏳ | Ephemeral pod execution |
 
@@ -56,15 +57,16 @@ More isolation and execution options.
 
 ## Phase 4: Observability
 
-**Status: Planned**
+**Status: In Progress**
 
 Production monitoring and debugging capabilities.
 
 | Feature | Status | Description |
 |---------|--------|-------------|
+| Cost Tracking | ✅ | Per-model pricing, cost budgets, token breakdown |
+| Token Budget Enforcement | ✅ | Now enforced (was configured but not checked) |
 | OpenTelemetry | ⏳ | Distributed tracing integration |
 | Prometheus Metrics | ⏳ | Token usage, latency, error rates |
-| Cost Tracking | ⏳ | Per-model cost estimation and budgets |
 | Alerting | ⏳ | Budget exceeded, error rate thresholds |
 
 ---
@@ -132,10 +134,11 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ### Priority Areas
 
-1. **Test Coverage** - Help us reach 90%+ coverage
-2. **WebAssembly REPL** - Implement Pyodide integration
-3. **Documentation** - Improve guides and examples
+1. **Test Coverage** - Push from 87% to 90%+ coverage
+2. **Docker Resource Reporting** - Report actual CPU/memory usage from containers
+3. **OpenTelemetry Integration** - Distributed tracing for observability
 4. **Tool Development** - Create useful community tools
+5. **Documentation** - Improve guides and examples
 
 ### How to Contribute
 

@@ -19,10 +19,13 @@ from rlm.core.types import (
 )
 from rlm.core.exceptions import (
     MaxDepthExceeded,
+    TokenBudgetExhausted,
+    CostBudgetExhausted,
     ToolBudgetExhausted,
     ToolNotFoundError,
     ToolExecutionError,
 )
+from rlm.core.pricing import estimate_cost
 
 if TYPE_CHECKING:
     from rlm.backends.base import BaseBackend, Tool
@@ -283,19 +286,31 @@ class RLM:
             response = f"Error: {e}"
 
         # Calculate totals
-        total_tokens = sum(e.input_tokens + e.output_tokens for e in events)
+        total_input_tokens = sum(e.input_tokens for e in events)
+        total_output_tokens = sum(e.output_tokens for e in events)
+        total_tokens = total_input_tokens + total_output_tokens
         total_tool_calls = sum(len(e.tool_calls) for e in events)
         duration_ms = int((time.time() - start_time) * 1000)
+
+        # Calculate total cost (sum of event costs, or None if any are unknown)
+        event_costs = [e.estimated_cost_usd for e in events]
+        if all(c is not None for c in event_costs):
+            total_cost_usd = sum(c for c in event_costs if c is not None)
+        else:
+            total_cost_usd = None
 
         # Log trajectory
         self.trajectory_logger.log_trajectory(trajectory_id, events)
 
         if self.verbose:
+            from rlm.core.pricing import format_cost
+
             logger.info(
                 "Completion finished",
                 trajectory_id=str(trajectory_id),
                 total_calls=len(events),
                 total_tokens=total_tokens,
+                total_cost=format_cost(total_cost_usd),
                 duration_ms=duration_ms,
             )
 
@@ -304,8 +319,11 @@ class RLM:
             trajectory_id=trajectory_id,
             total_calls=len(events),
             total_tokens=total_tokens,
+            total_input_tokens=total_input_tokens,
+            total_output_tokens=total_output_tokens,
             total_tool_calls=total_tool_calls,
             duration_ms=duration_ms,
+            total_cost_usd=total_cost_usd,
             events=events if options.include_trajectory else [],
         )
 
@@ -329,6 +347,17 @@ class RLM:
         if len(events) >= options.max_subcalls:
             raise MaxDepthExceeded(depth=len(events), max_depth=options.max_subcalls)
 
+        # Check token budget
+        current_tokens = sum(e.input_tokens + e.output_tokens for e in events)
+        if current_tokens >= options.token_budget:
+            raise TokenBudgetExhausted(tokens_used=current_tokens, budget=options.token_budget)
+
+        # Check cost budget
+        if options.cost_budget_usd is not None:
+            current_cost = sum(e.estimated_cost_usd or 0 for e in events)
+            if current_cost >= options.cost_budget_usd:
+                raise CostBudgetExhausted(cost_used=current_cost, budget=options.cost_budget_usd)
+
         # Get available tools
         tools = self.tool_registry.get_all()
 
@@ -336,6 +365,13 @@ class RLM:
         start_time = time.time()
         response = await self.backend.complete(messages, tools=tools)
         duration_ms = int((time.time() - start_time) * 1000)
+
+        # Calculate estimated cost for this call
+        event_cost = estimate_cost(
+            model=self.backend.model,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+        )
 
         # Create event
         event = TrajectoryEvent(
@@ -349,6 +385,7 @@ class RLM:
             input_tokens=response.input_tokens,
             output_tokens=response.output_tokens,
             duration_ms=duration_ms,
+            estimated_cost_usd=event_cost,
         )
 
         # Handle tool calls

@@ -96,6 +96,8 @@ class REPLResult:
     error: str | None = None
     execution_time_ms: int = 0
     truncated: bool = False
+    memory_peak_bytes: int | None = None  # Peak memory usage during execution
+    cpu_time_ms: int | None = None  # CPU time consumed
 
     @property
     def success(self) -> bool:
@@ -109,6 +111,8 @@ class REPLResult:
             "error": self.error,
             "execution_time_ms": self.execution_time_ms,
             "truncated": self.truncated,
+            "memory_peak_bytes": self.memory_peak_bytes,
+            "cpu_time_ms": self.cpu_time_ms,
         }
 
 
@@ -130,6 +134,7 @@ class TrajectoryEvent:
     duration_ms: int = 0
     error: str | None = None
     timestamp: datetime = field(default_factory=datetime.utcnow)
+    estimated_cost_usd: float | None = None  # Estimated API cost for this event
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -148,6 +153,7 @@ class TrajectoryEvent:
             "duration_ms": self.duration_ms,
             "error": self.error,
             "timestamp": self.timestamp.isoformat(),
+            "estimated_cost_usd": self.estimated_cost_usd,
         }
 
 
@@ -162,6 +168,9 @@ class RLMResult:
     total_tool_calls: int
     duration_ms: int
     events: list[TrajectoryEvent] = field(default_factory=list)
+    total_input_tokens: int = 0  # Total input/prompt tokens across all calls
+    total_output_tokens: int = 0  # Total output/completion tokens across all calls
+    total_cost_usd: float | None = None  # Total estimated API cost
 
     @property
     def success(self) -> bool:
@@ -175,8 +184,11 @@ class RLMResult:
             "trajectory_id": str(self.trajectory_id),
             "total_calls": self.total_calls,
             "total_tokens": self.total_tokens,
+            "total_input_tokens": self.total_input_tokens,
+            "total_output_tokens": self.total_output_tokens,
             "total_tool_calls": self.total_tool_calls,
             "duration_ms": self.duration_ms,
+            "total_cost_usd": self.total_cost_usd,
             "success": self.success,
             "events": [e.to_dict() for e in self.events],
         }
@@ -194,6 +206,7 @@ class CompletionOptions:
     include_trajectory: bool = False
     temperature: float | None = None
     stop_sequences: list[str] | None = None
+    cost_budget_usd: float | None = None  # Maximum API cost in USD
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -206,4 +219,5 @@ class CompletionOptions:
             "include_trajectory": self.include_trajectory,
             "temperature": self.temperature,
             "stop_sequences": self.stop_sequences,
+            "cost_budget_usd": self.cost_budget_usd,
         }

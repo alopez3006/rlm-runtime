@@ -3,8 +3,17 @@
 from __future__ import annotations
 
 import builtins
+import platform
 import time
 from typing import Any
+
+# Resource tracking only available on Unix
+try:
+    import resource
+
+    HAS_RESOURCE = True
+except ImportError:
+    HAS_RESOURCE = False
 
 from RestrictedPython import compile_restricted, safe_builtins
 from RestrictedPython.Eval import default_guarded_getiter, default_guarded_getitem
@@ -109,6 +118,23 @@ class LocalREPL(BaseREPL):
         """Guard attribute writes."""
         return obj
 
+    def _get_resource_usage(self) -> tuple[float, int] | None:
+        """Get current resource usage (CPU time in ms, memory in bytes).
+
+        Returns:
+            Tuple of (cpu_time_ms, memory_bytes) or None on Windows
+        """
+        if not HAS_RESOURCE:
+            return None
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        cpu_time_ms = int((usage.ru_utime + usage.ru_stime) * 1000)
+        # ru_maxrss is in bytes on Linux, kilobytes on macOS
+        if platform.system() == "Darwin":
+            memory_bytes = usage.ru_maxrss  # Already in bytes on macOS
+        else:
+            memory_bytes = usage.ru_maxrss * 1024  # Convert KB to bytes on Linux
+        return cpu_time_ms, memory_bytes
+
     async def execute(self, code: str, timeout: int | None = None) -> REPLResult:
         """Execute code in the local sandbox.
 
@@ -121,6 +147,9 @@ class LocalREPL(BaseREPL):
         """
         timeout = timeout or self.timeout
         start_time = time.time()
+
+        # Get resource usage before execution
+        start_resources = self._get_resource_usage()
 
         try:
             # Compile with RestrictedPython
@@ -149,6 +178,17 @@ class LocalREPL(BaseREPL):
             # Execute - in RestrictedPython 8.x, byte_code IS the code object
             exec(byte_code, self._globals)
 
+            # Get resource usage after execution
+            end_resources = self._get_resource_usage()
+
+            # Calculate resource deltas
+            cpu_time_ms = None
+            memory_peak_bytes = None
+            if start_resources and end_resources:
+                cpu_time_ms = end_resources[0] - start_resources[0]
+                # Memory is peak, not delta - report the current peak
+                memory_peak_bytes = end_resources[1]
+
             # Collect output from RestrictedPython's PrintCollector
             # The '_print' variable holds the PrintCollector instance after execution
             output = ""
@@ -171,6 +211,8 @@ class LocalREPL(BaseREPL):
                 error=None,
                 execution_time_ms=int((time.time() - start_time) * 1000),
                 truncated=truncated,
+                memory_peak_bytes=memory_peak_bytes,
+                cpu_time_ms=cpu_time_ms,
             )
 
         except Exception as e:

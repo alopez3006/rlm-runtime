@@ -255,6 +255,27 @@ for _name in list(globals().keys()):
         except Exception:
             return False
 
+    def get_context(self) -> dict[str, Any]:
+        """Get the current shared context.
+
+        Returns:
+            Current context dictionary
+        """
+        return self._context.copy()
+
+    def set_context(self, key: str, value: Any) -> None:
+        """Set a value in the shared context.
+
+        Args:
+            key: Context key
+            value: Value to store
+        """
+        self._context[key] = value
+
+    def clear_context(self) -> None:
+        """Clear all values from the shared context."""
+        self._context.clear()
+
     @property
     def environment_name(self) -> str:
         """Return the environment name."""

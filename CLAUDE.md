@@ -11,8 +11,9 @@ RLM Runtime is a **Recursive Language Model runtime** with sandboxed REPL execut
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  RLM Orchestrator                                               │
-│  • Manages recursion depth and token budgets                    │
+│  • Manages recursion depth, token budgets, and cost limits      │
 │  • Coordinates LLM calls and tool execution                     │
+│  • Tracks API costs in real-time via pricing module             │
 ├─────────────────────────────────────────────────────────────────┤
 │  LLM Backends              │  REPL Environments                 │
 │  • LiteLLM (100+ providers)│  • Local (RestrictedPython)        │
@@ -34,7 +35,8 @@ src/rlm/
 │   ├── orchestrator.py      # Main RLM class, completion logic
 │   ├── types.py             # Message, Tool, Result types
 │   ├── config.py            # Configuration loading
-│   └── exceptions.py        # Custom exception hierarchy
+│   ├── exceptions.py        # Custom exception hierarchy
+│   └── pricing.py           # Model pricing for cost estimation
 ├── backends/                # LLM provider integrations
 │   ├── base.py              # Abstract backend class
 │   ├── litellm.py           # LiteLLM (100+ providers)
@@ -98,13 +100,82 @@ from rlm.core.exceptions import (
     RLMError,              # Base exception
     MaxDepthExceeded,      # Recursion limit hit
     TokenBudgetExhausted,  # Token limit hit
+    CostBudgetExhausted,   # Cost budget exceeded
     ToolBudgetExhausted,   # Tool call limit hit
     REPLExecutionError,    # Code execution failed
     REPLSecurityError,     # Security violation
+    REPLResourceExceeded,  # Memory/CPU limit exceeded
     ToolNotFoundError,     # Unknown tool
     BackendConnectionError, # LLM API error
 )
 ```
+
+## Cost Tracking & Budget Enforcement
+
+The orchestrator tracks API costs and enforces budgets in real-time.
+
+### Pricing Module
+
+```python
+from rlm.core.pricing import estimate_cost, format_cost, get_pricing
+
+# Estimate cost for a completion
+cost = estimate_cost("gpt-4o-mini", input_tokens=1000, output_tokens=500)
+print(format_cost(cost))  # "$0.0005"
+
+# Supported models: OpenAI, Anthropic, Google, Mistral
+pricing = get_pricing("claude-3-5-sonnet")  # Also handles "anthropic/claude-3-5-sonnet"
+```
+
+### Budget Enforcement
+
+Budgets are checked **before** each LLM call in the recursive completion loop:
+
+```python
+from rlm.core.types import CompletionOptions
+
+# Set token AND cost budgets
+options = CompletionOptions(
+    token_budget=8000,       # Max total tokens
+    cost_budget_usd=0.10,    # Max $0.10 spend
+    tool_budget=20,          # Max tool calls
+)
+
+result = await rlm.completion("Complex task...", options=options)
+
+# Result includes cost tracking
+print(f"Total cost: ${result.total_cost_usd:.4f}")
+print(f"Input tokens: {result.total_input_tokens}")
+print(f"Output tokens: {result.total_output_tokens}")
+```
+
+### Cost in Trajectory Events
+
+Each `TrajectoryEvent` includes `estimated_cost_usd`:
+
+```python
+options = CompletionOptions(include_trajectory=True)
+result = await rlm.completion("...", options=options)
+
+for event in result.events:
+    print(f"Call cost: ${event.estimated_cost_usd:.4f}")
+```
+
+## Resource Tracking (REPL)
+
+The LocalREPL tracks CPU time and peak memory usage (Unix only):
+
+```python
+from rlm.repl.local import LocalREPL
+
+repl = LocalREPL()
+result = await repl.execute("x = [i**2 for i in range(10000)]")
+
+print(f"CPU time: {result.cpu_time_ms}ms")
+print(f"Peak memory: {result.memory_peak_bytes} bytes")
+```
+
+Note: Resource tracking requires the `resource` module (Unix). On Windows, these fields are `None`.
 
 ## Configuration
 
@@ -307,9 +378,46 @@ For this project (rlm-runtime), Snipara is configured with:
 | Add exception | `src/rlm/core/exceptions.py` |
 | Change config | `src/rlm/core/config.py` |
 | Update orchestrator | `src/rlm/core/orchestrator.py` |
+| Update model pricing | `src/rlm/core/pricing.py` |
+| Modify result types | `src/rlm/core/types.py` |
+
+## Snipara Context Retrieval Improvement Goals
+
+### Current Bottlenecks & Solutions
+
+#### 1. Token Efficiency (4.1x → 10x+ target)
+
+**Current limitation:** The extraction algorithm includes too many sections.
+
+**Planned improvements:**
+- **Smarter section scoring** - Weight title matches higher, penalize long sections
+- **Semantic deduplication** - Remove overlapping content
+- **Adaptive budgeting** - Use less context for simple queries
+
+#### 2. Context Quality (38% precision → 70%+ target)
+
+**Current limitation:** The section scoring is too broad, matching on common words.
+
+**Planned improvements:**
+- Stricter relevance thresholds
+- TF-IDF or embedding-based scoring instead of keyword overlap
+- Better test case definitions with more specific `relevant_sections`
+
+#### 3. Answer Quality (7.1 → 8.5+ target)
+
+**Current limitation:** Some context is relevant but not specific enough.
+
+**Planned improvements:**
+- More targeted section extraction
+- Better ranking of highly relevant vs tangentially relevant content
+- Improved query decomposition for complex questions
 
 ## Recent Changes
 
+- **Cost Tracking**: New pricing.py module with model pricing data for OpenAI, Anthropic, Google, and Mistral models. RLMResult now includes `total_cost_usd`, `total_input_tokens`, `total_output_tokens`.
+- **Budget Enforcement**: Token budget is now enforced (was a bug - configured but never checked). New `cost_budget_usd` option for cost-based limits.
+- **Resource Tracking**: LocalREPL tracks CPU time and peak memory via `cpu_time_ms` and `memory_peak_bytes` in REPLResult.
+- **New Exceptions**: Added `CostBudgetExhausted` and `REPLResourceExceeded` exceptions.
 - **MCP Server Refactor**: Simplified to code sandbox only (no LLM calls)
 - **OAuth Support**: Added auth.py for Snipara token integration
 - **WebAssembly REPL**: New wasm.py for Pyodide execution

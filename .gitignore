@@ -80,6 +80,7 @@ logs/
 # Local config
 rlm.toml
 .rlm/
+.mcp.json
 
 # Docker
 .docker/

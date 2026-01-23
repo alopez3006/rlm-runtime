@@ -93,6 +93,24 @@ class TokenBudgetExhausted(RLMError):
         self.budget = budget
 
 
+class CostBudgetExhausted(RLMError):
+    """Raised when the cost budget is exhausted.
+
+    Attributes:
+        cost_used: Amount spent in USD
+        budget: Configured cost budget in USD
+    """
+
+    def __init__(self, cost_used: float, budget: float):
+        super().__init__(
+            f"Cost budget exhausted: ${cost_used:.4f}/${budget:.4f} USD",
+            cost_used=cost_used,
+            budget=budget,
+        )
+        self.cost_used = cost_used
+        self.budget = budget
+
+
 class ToolBudgetExhausted(RLMError):
     """Raised when the tool call budget is exhausted.
 
@@ -206,6 +224,30 @@ class REPLSecurityError(REPLError):
             violation=violation,
         )
         self.violation = violation
+
+
+class REPLResourceExceeded(REPLError):
+    """Raised when a resource limit is exceeded during REPL execution.
+
+    Attributes:
+        resource: Type of resource exceeded (memory, cpu, timeout)
+        limit: Configured limit value
+        actual: Actual usage (if known)
+    """
+
+    def __init__(self, resource: str, limit: str, actual: str | None = None):
+        if actual:
+            message = f"Resource limit exceeded: {resource} ({actual}/{limit})"
+        else:
+            message = f"Resource limit exceeded: {resource} (limit: {limit})"
+        super().__init__(
+            message,
+            resource=resource,
+            limit=limit,
+        )
+        self.resource = resource
+        self.limit = limit
+        self.actual = actual
 
 
 # Tool Errors
