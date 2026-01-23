@@ -213,6 +213,65 @@ rlm mcp-serve         # Start MCP server
 rlm doctor            # Check setup
 ```
 
+## Trajectory Visualizer (Streamlit)
+
+The visualizer is a Streamlit web dashboard for exploring RLM execution trajectories.
+
+### Installation
+
+```bash
+# Install with visualizer support
+pip install rlm-runtime[visualizer]
+
+# Or install dependencies manually
+pip install streamlit plotly
+```
+
+### Usage
+
+```bash
+# Start visualizer (default port 8501)
+rlm visualize
+
+# Custom port
+rlm visualize --port 8080
+
+# Custom log directory
+rlm visualize --log-dir ./my-logs
+```
+
+Opens at **http://localhost:8501**.
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| **Trajectory List** | Browse all execution logs |
+| **Token Usage** | Per-call and cumulative token counts |
+| **Cost Tracking** | Estimated API costs per call |
+| **Tool Calls** | View tool invocations and results |
+| **REPL Results** | Code execution outputs and errors |
+| **Timing** | Duration of each step |
+| **Visualizations** | Plotly charts for token/cost analysis |
+
+### Manual Run
+
+```bash
+# Run Streamlit directly
+streamlit run -m rlm.visualizer.app
+
+# With options
+streamlit run -m rlm.visualizer.app --server.port 8080
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/rlm/visualizer/app.py` | Main Streamlit application |
+| `src/rlm/cli/main.py:263` | CLI `visualize` command |
+| `src/rlm/logging/trajectory.py` | Trajectory logging/loading |
+
 ## Testing
 
 ```bash
