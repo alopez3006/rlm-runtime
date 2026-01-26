@@ -1,13 +1,11 @@
 """Tests for REPL safety utilities."""
 
-import pytest
-
 from rlm.repl.safety import (
     ALLOWED_IMPORTS,
     BLOCKED_IMPORTS,
+    MAX_OUTPUT_SIZE,
     is_import_allowed,
     truncate_output,
-    MAX_OUTPUT_SIZE,
 )
 
 

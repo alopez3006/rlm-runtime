@@ -8,8 +8,8 @@ from uuid import uuid4
 
 import pytest
 
+from rlm.core.types import ToolCall, ToolResult, TrajectoryEvent
 from rlm.logging.trajectory import TrajectoryLogger
-from rlm.core.types import TrajectoryEvent, ToolCall, ToolResult
 
 
 @pytest.fixture
@@ -206,12 +206,8 @@ class TestLoadTrajectory:
                 depth=0,
                 prompt="Test prompt",
                 response="Test response",
-                tool_calls=[
-                    ToolCall(id="tc1", name="test_tool", arguments={"arg": "val"})
-                ],
-                tool_results=[
-                    ToolResult(tool_call_id="tc1", content="result", is_error=False)
-                ],
+                tool_calls=[ToolCall(id="tc1", name="test_tool", arguments={"arg": "val"})],
+                tool_results=[ToolResult(tool_call_id="tc1", content="result", is_error=False)],
                 repl_results=[],
                 input_tokens=100,
                 output_tokens=50,
@@ -243,20 +239,25 @@ class TestLoadTrajectory:
         with open(log_path, "w") as f:
             f.write('{"_type": "trajectory_metadata"}\n')
             f.write("\n")
-            f.write(json.dumps({
-                "trajectory_id": trajectory_id,
-                "call_id": str(uuid4()),
-                "depth": 0,
-                "prompt": "Test",
-                "response": "Response",
-                "tool_calls": [],
-                "tool_results": [],
-                "repl_results": [],
-                "input_tokens": 10,
-                "output_tokens": 5,
-                "duration_ms": 100,
-                "timestamp": datetime.utcnow().isoformat(),
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "trajectory_id": trajectory_id,
+                        "call_id": str(uuid4()),
+                        "depth": 0,
+                        "prompt": "Test",
+                        "response": "Response",
+                        "tool_calls": [],
+                        "tool_results": [],
+                        "repl_results": [],
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "duration_ms": 100,
+                        "timestamp": datetime.utcnow().isoformat(),
+                    }
+                )
+                + "\n"
+            )
 
         events = logger.load_trajectory(trajectory_id)
         assert len(events) == 1
@@ -300,7 +301,7 @@ class TestListRecent:
 
     def test_respects_limit(self, logger):
         """Should respect the limit parameter."""
-        for i in range(5):
+        for _i in range(5):
             trajectory_id = uuid4()
             events = [
                 TrajectoryEvent(
@@ -377,6 +378,7 @@ class TestCleanupOld:
         # Set modification time to 10 days ago
         old_time = time.time() - (10 * 24 * 60 * 60)
         import os
+
         os.utime(old_file, (old_time, old_time))
 
         # Create a recent file

@@ -1,29 +1,27 @@
 """Tests for RLM exception hierarchy."""
 
-import pytest
-
 from rlm.core.exceptions import (
-    RLMError,
-    MaxDepthExceeded,
-    TokenBudgetExhausted,
-    ToolBudgetExhausted,
-    TimeoutExceeded,
-    REPLError,
-    REPLExecutionError,
-    REPLTimeoutError,
-    REPLImportError,
-    REPLSecurityError,
-    ToolError,
-    ToolNotFoundError,
-    ToolExecutionError,
-    ToolValidationError,
-    BackendError,
-    BackendConnectionError,
-    BackendRateLimitError,
     BackendAuthError,
+    BackendConnectionError,
+    BackendError,
+    BackendRateLimitError,
     ConfigError,
     ConfigNotFoundError,
     ConfigValidationError,
+    MaxDepthExceeded,
+    REPLError,
+    REPLExecutionError,
+    REPLImportError,
+    REPLSecurityError,
+    REPLTimeoutError,
+    RLMError,
+    TimeoutExceeded,
+    TokenBudgetExhausted,
+    ToolBudgetExhausted,
+    ToolError,
+    ToolExecutionError,
+    ToolNotFoundError,
+    ToolValidationError,
 )
 
 

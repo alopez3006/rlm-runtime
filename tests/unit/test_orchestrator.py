@@ -1,21 +1,14 @@
 """Tests for RLM Orchestrator."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
-from rlm.core.orchestrator import RLM
+import pytest
+
 from rlm.core.config import RLMConfig
+from rlm.core.orchestrator import RLM
 from rlm.core.types import (
-    Message,
     CompletionOptions,
     ToolCall,
-)
-from rlm.core.exceptions import (
-    MaxDepthExceeded,
-    TokenBudgetExhausted,
-    CostBudgetExhausted,
-    ToolNotFoundError,
 )
 
 
@@ -69,6 +62,7 @@ class TestCreateBackend:
         rlm = RLM(backend="litellm", model="gpt-4")
 
         from rlm.backends.litellm import LiteLLMBackend
+
         assert isinstance(rlm.backend, LiteLLMBackend)
 
     @patch("rlm.logging.trajectory.TrajectoryLogger")
@@ -77,6 +71,7 @@ class TestCreateBackend:
         rlm = RLM(backend="openai", model="gpt-4")
 
         from rlm.backends.litellm import LiteLLMBackend
+
         assert isinstance(rlm.backend, LiteLLMBackend)
 
     @patch("rlm.logging.trajectory.TrajectoryLogger")
@@ -85,6 +80,7 @@ class TestCreateBackend:
         rlm = RLM(backend="anthropic", model="claude-3-sonnet")
 
         from rlm.backends.litellm import LiteLLMBackend
+
         assert isinstance(rlm.backend, LiteLLMBackend)
 
     @patch("rlm.logging.trajectory.TrajectoryLogger")
@@ -114,6 +110,7 @@ class TestCreateREPL:
         rlm = RLM(environment="local")
 
         from rlm.repl.local import LocalREPL
+
         assert isinstance(rlm.repl, LocalREPL)
 
     @patch("rlm.logging.trajectory.TrajectoryLogger")
@@ -191,7 +188,7 @@ class TestCompletion:
         """Should log trajectory."""
         rlm, mock_backend, mock_response = mock_rlm
 
-        result = await rlm.completion("Hello")
+        await rlm.completion("Hello")
 
         rlm.trajectory_logger.log_trajectory.assert_called_once()
 
@@ -218,9 +215,7 @@ class TestToolExecution:
             # First call: tool call
             mock_response1 = MagicMock()
             mock_response1.content = ""
-            mock_response1.tool_calls = [
-                ToolCall(id="call1", name="test_tool", arguments={"x": 1})
-            ]
+            mock_response1.tool_calls = [ToolCall(id="call1", name="test_tool", arguments={"x": 1})]
             mock_response1.input_tokens = 100
             mock_response1.output_tokens = 50
 
@@ -231,9 +226,7 @@ class TestToolExecution:
             mock_response2.input_tokens = 150
             mock_response2.output_tokens = 75
 
-            mock_backend.complete = AsyncMock(
-                side_effect=[mock_response1, mock_response2]
-            )
+            mock_backend.complete = AsyncMock(side_effect=[mock_response1, mock_response2])
 
             rlm = RLM(backend=mock_backend, environment="local")
 
@@ -250,7 +243,7 @@ class TestToolExecution:
         """Should execute tool calls."""
         rlm, mock_backend, mock_tool = mock_rlm_with_tools
 
-        result = await rlm.completion("Use the test tool")
+        await rlm.completion("Use the test tool")
 
         mock_tool.execute.assert_called_once()
 
@@ -286,9 +279,7 @@ class TestDepthLimits:
             mock_backend = MagicMock()
             mock_response = MagicMock()
             mock_response.content = ""
-            mock_response.tool_calls = [
-                ToolCall(id="call1", name="test", arguments={})
-            ]
+            mock_response.tool_calls = [ToolCall(id="call1", name="test", arguments={})]
             mock_response.input_tokens = 10
             mock_response.output_tokens = 5
             mock_backend.complete = AsyncMock(return_value=mock_response)
@@ -334,9 +325,7 @@ class TestToolNotFound:
             mock_response2.input_tokens = 20
             mock_response2.output_tokens = 10
 
-            mock_backend.complete = AsyncMock(
-                side_effect=[mock_response1, mock_response2]
-            )
+            mock_backend.complete = AsyncMock(side_effect=[mock_response1, mock_response2])
 
             rlm = RLM(backend=mock_backend, environment="local")
 
@@ -464,9 +453,7 @@ class TestTokenAndToolBudgets:
             mock_backend = MagicMock()
             mock_response = MagicMock()
             mock_response.content = ""
-            mock_response.tool_calls = [
-                ToolCall(id="call1", name="test_tool", arguments={})
-            ]
+            mock_response.tool_calls = [ToolCall(id="call1", name="test_tool", arguments={})]
             mock_response.input_tokens = 10
             mock_response.output_tokens = 5
             mock_backend.complete = AsyncMock(return_value=mock_response)
@@ -507,9 +494,7 @@ class TestTokenAndToolBudgets:
 
             mock_response = MagicMock()
             mock_response.content = ""
-            mock_response.tool_calls = [
-                ToolCall(id="call1", name="test_tool", arguments={})
-            ]
+            mock_response.tool_calls = [ToolCall(id="call1", name="test_tool", arguments={})]
             mock_response.input_tokens = 500  # High token usage
             mock_response.output_tokens = 500
             mock_backend.complete = AsyncMock(return_value=mock_response)
@@ -537,7 +522,11 @@ class TestTokenAndToolBudgets:
 
             # Should handle budget exhaustion - error in response
             assert result is not None
-            assert "Error" in result.response or "token" in result.response.lower() or "budget" in result.response.lower()
+            assert (
+                "Error" in result.response
+                or "token" in result.response.lower()
+                or "budget" in result.response.lower()
+            )
 
     @pytest.mark.asyncio
     async def test_cost_budget_exceeded(self):
@@ -551,9 +540,7 @@ class TestTokenAndToolBudgets:
 
             mock_response = MagicMock()
             mock_response.content = ""
-            mock_response.tool_calls = [
-                ToolCall(id="call1", name="test_tool", arguments={})
-            ]
+            mock_response.tool_calls = [ToolCall(id="call1", name="test_tool", arguments={})]
             mock_response.input_tokens = 10000  # Lots of tokens
             mock_response.output_tokens = 5000
             mock_backend.complete = AsyncMock(return_value=mock_response)
@@ -582,7 +569,11 @@ class TestTokenAndToolBudgets:
 
             # Should handle budget exhaustion - error in response
             assert result is not None
-            assert "Error" in result.response or "cost" in result.response.lower() or "budget" in result.response.lower()
+            assert (
+                "Error" in result.response
+                or "cost" in result.response.lower()
+                or "budget" in result.response.lower()
+            )
 
 
 class TestCostTracking:

@@ -1,10 +1,6 @@
 """Tests for RLM Trajectory Visualizer."""
 
-import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 
 class TestLoadTrajectory:
@@ -34,10 +30,7 @@ class TestLoadTrajectory:
         from rlm.visualizer.app import load_trajectory
 
         log_file = tmp_path / "test.jsonl"
-        log_file.write_text(
-            '{"call_id": "call1", "depth": 0}\n'
-            '{"call_id": "call2", "depth": 1}\n'
-        )
+        log_file.write_text('{"call_id": "call1", "depth": 0}\n{"call_id": "call2", "depth": 1}\n')
 
         result = load_trajectory(log_file)
 
@@ -50,10 +43,7 @@ class TestLoadTrajectory:
 
         log_file = tmp_path / "test.jsonl"
         log_file.write_text(
-            '{"call_id": "call1", "depth": 0}\n'
-            '\n'
-            '   \n'
-            '{"call_id": "call2", "depth": 1}\n'
+            '{"call_id": "call1", "depth": 0}\n\n   \n{"call_id": "call2", "depth": 1}\n'
         )
 
         result = load_trajectory(log_file)
@@ -66,17 +56,22 @@ class TestListTrajectories:
 
     def test_lists_trajectories_sorted_by_mtime(self, tmp_path):
         """Should list trajectories sorted by modification time."""
-        from rlm.visualizer.app import list_trajectories
         import time
+
+        from rlm.visualizer.app import list_trajectories
 
         # Create files with different mtimes
         log1 = tmp_path / "old.jsonl"
-        log1.write_text('{"_type": "trajectory_metadata", "trajectory_id": "old", "timestamp": "2024-01-01T00:00:00", "event_count": 1, "total_tokens": 100, "total_duration_ms": 500}\n')
+        log1.write_text(
+            '{"_type": "trajectory_metadata", "trajectory_id": "old", "timestamp": "2024-01-01T00:00:00", "event_count": 1, "total_tokens": 100, "total_duration_ms": 500}\n'
+        )
 
         time.sleep(0.01)  # Ensure different mtime
 
         log2 = tmp_path / "new.jsonl"
-        log2.write_text('{"_type": "trajectory_metadata", "trajectory_id": "new", "timestamp": "2024-01-02T00:00:00", "event_count": 2, "total_tokens": 200, "total_duration_ms": 1000}\n')
+        log2.write_text(
+            '{"_type": "trajectory_metadata", "trajectory_id": "new", "timestamp": "2024-01-02T00:00:00", "event_count": 2, "total_tokens": 200, "total_duration_ms": 1000}\n'
+        )
 
         result = list_trajectories(tmp_path)
 
@@ -109,7 +104,9 @@ class TestListTrajectories:
 
         # Valid file
         valid = tmp_path / "valid.jsonl"
-        valid.write_text('{"_type": "trajectory_metadata", "trajectory_id": "valid", "timestamp": "2024-01-01", "event_count": 1, "total_tokens": 100, "total_duration_ms": 500}\n')
+        valid.write_text(
+            '{"_type": "trajectory_metadata", "trajectory_id": "valid", "timestamp": "2024-01-01", "event_count": 1, "total_tokens": 100, "total_duration_ms": 500}\n'
+        )
 
         # Invalid file
         invalid = tmp_path / "invalid.jsonl"
@@ -126,7 +123,9 @@ class TestListTrajectories:
 
         # File with metadata
         with_meta = tmp_path / "with_meta.jsonl"
-        with_meta.write_text('{"_type": "trajectory_metadata", "trajectory_id": "has_meta", "timestamp": "2024-01-01", "event_count": 1, "total_tokens": 100, "total_duration_ms": 500}\n')
+        with_meta.write_text(
+            '{"_type": "trajectory_metadata", "trajectory_id": "has_meta", "timestamp": "2024-01-01", "event_count": 1, "total_tokens": 100, "total_duration_ms": 500}\n'
+        )
 
         # File without metadata
         no_meta = tmp_path / "no_meta.jsonl"
@@ -151,8 +150,9 @@ class TestRenderEventTree:
 
     def test_returns_empty_figure_for_no_events(self):
         """Should return empty figure when no events."""
-        from rlm.visualizer.app import render_event_tree
         import plotly.graph_objects as go
+
+        from rlm.visualizer.app import render_event_tree
 
         result = render_event_tree([])
 
@@ -160,8 +160,9 @@ class TestRenderEventTree:
 
     def test_creates_figure_with_nodes(self):
         """Should create figure with nodes for events."""
-        from rlm.visualizer.app import render_event_tree
         import plotly.graph_objects as go
+
+        from rlm.visualizer.app import render_event_tree
 
         events = [
             {
@@ -222,8 +223,9 @@ class TestRenderTokenChart:
 
     def test_returns_empty_figure_for_no_events(self):
         """Should return empty figure when no events."""
-        from rlm.visualizer.app import render_token_chart
         import plotly.graph_objects as go
+
+        from rlm.visualizer.app import render_token_chart
 
         result = render_token_chart([])
 
@@ -231,8 +233,9 @@ class TestRenderTokenChart:
 
     def test_creates_stacked_bar_chart(self):
         """Should create stacked bar chart for token usage."""
-        from rlm.visualizer.app import render_token_chart
         import plotly.graph_objects as go
+
+        from rlm.visualizer.app import render_token_chart
 
         events = [
             {"input_tokens": 100, "output_tokens": 50},
@@ -267,8 +270,9 @@ class TestRenderDurationChart:
 
     def test_returns_empty_figure_for_no_events(self):
         """Should return empty figure when no events."""
-        from rlm.visualizer.app import render_duration_chart
         import plotly.graph_objects as go
+
+        from rlm.visualizer.app import render_duration_chart
 
         result = render_duration_chart([])
 
@@ -276,8 +280,9 @@ class TestRenderDurationChart:
 
     def test_creates_bar_chart(self):
         """Should create bar chart for durations."""
-        from rlm.visualizer.app import render_duration_chart
         import plotly.graph_objects as go
+
+        from rlm.visualizer.app import render_duration_chart
 
         events = [
             {"duration_ms": 500},
@@ -667,7 +672,9 @@ class TestListTrajectoriesEdgeCases:
         from rlm.visualizer.app import list_trajectories
 
         incomplete = tmp_path / "incomplete.jsonl"
-        incomplete.write_text('{"_type": "trajectory_metadata", "trajectory_id": "test"}\n')  # Missing other fields
+        incomplete.write_text(
+            '{"_type": "trajectory_metadata", "trajectory_id": "test"}\n'
+        )  # Missing other fields
 
         result = list_trajectories(tmp_path)
 

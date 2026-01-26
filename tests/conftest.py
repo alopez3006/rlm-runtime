@@ -1,11 +1,10 @@
 """Pytest configuration and fixtures."""
 
-import pytest
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from rlm.backends.base import BackendResponse, Tool
-from rlm.core.types import ToolCall
 from rlm.repl.local import LocalREPL
 
 
@@ -19,19 +18,22 @@ def local_repl():
 def mock_backend():
     """Create a mock LLM backend."""
     backend = MagicMock()
-    backend.complete = AsyncMock(return_value=BackendResponse(
-        content="Test response",
-        tool_calls=[],
-        input_tokens=10,
-        output_tokens=5,
-        finish_reason="stop",
-    ))
+    backend.complete = AsyncMock(
+        return_value=BackendResponse(
+            content="Test response",
+            tool_calls=[],
+            input_tokens=10,
+            output_tokens=5,
+            finish_reason="stop",
+        )
+    )
     return backend
 
 
 @pytest.fixture
 def sample_tool():
     """Create a sample tool for testing."""
+
     async def handler(x: int, y: int) -> int:
         return x + y
 

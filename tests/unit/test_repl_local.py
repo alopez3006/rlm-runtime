@@ -1,6 +1,7 @@
 """Unit tests for LocalREPL."""
 
 import pytest
+
 from rlm.repl.local import LocalREPL
 
 

@@ -1,7 +1,8 @@
 """Integration tests for RLM orchestrator."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from rlm.backends.base import BackendResponse, Tool
 from rlm.core.orchestrator import RLM
@@ -80,12 +81,14 @@ class TestOrchestratorBasic:
             async def dummy_handler():
                 return "ok"
 
-            rlm.tool_registry.register(Tool(
-                name="test_tool",
-                description="Test",
-                parameters={"type": "object", "properties": {}},
-                handler=dummy_handler,
-            ))
+            rlm.tool_registry.register(
+                Tool(
+                    name="test_tool",
+                    description="Test",
+                    parameters={"type": "object", "properties": {}},
+                    handler=dummy_handler,
+                )
+            )
 
             options = CompletionOptions(max_depth=2)
             result = await rlm.completion("Test", options=options)
@@ -129,19 +132,21 @@ class TestOrchestratorTools:
             async def add_handler(x: int, y: int) -> int:
                 return x + y
 
-            rlm.tool_registry.register(Tool(
-                name="add",
-                description="Add numbers",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "x": {"type": "integer"},
-                        "y": {"type": "integer"},
+            rlm.tool_registry.register(
+                Tool(
+                    name="add",
+                    description="Add numbers",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "x": {"type": "integer"},
+                            "y": {"type": "integer"},
+                        },
+                        "required": ["x", "y"],
                     },
-                    "required": ["x", "y"],
-                },
-                handler=add_handler,
-            ))
+                    handler=add_handler,
+                )
+            )
 
             result = await rlm.completion("Add 2 and 3")
 

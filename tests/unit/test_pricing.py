@@ -3,11 +3,11 @@
 import pytest
 
 from rlm.core.pricing import (
-    ModelPricing,
     MODEL_PRICING,
-    get_pricing,
+    ModelPricing,
     estimate_cost,
     format_cost,
+    get_pricing,
 )
 
 

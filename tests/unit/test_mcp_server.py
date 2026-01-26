@@ -4,11 +4,11 @@ import pytest
 from mcp.server import Server
 
 from rlm.mcp.server import (
-    create_server,
+    _clear_repl_context,
     _execute_python,
     _get_repl_context,
     _set_repl_context,
-    _clear_repl_context,
+    create_server,
 )
 from rlm.repl.local import LocalREPL
 
@@ -247,11 +247,11 @@ class TestServerCallTool:
         # Get the call_tool handler from the server's request handlers
         # We need to test the handler by invoking the internal function
         # Since call_tool is a decorated function, we access it via the server internals
+
         from rlm.repl.local import LocalREPL
-        from mcp.types import CallToolResult, TextContent
 
         # Create a test repl and test the logic directly
-        repl = LocalREPL(timeout=5)
+        LocalREPL(timeout=5)
 
         # We can't easily test the decorated function, but we can test the module-level
         # behavior by importing and testing the create_server mechanism
@@ -285,7 +285,8 @@ class TestExecutePythonEdgeCases:
     @pytest.mark.asyncio
     async def test_execute_python_with_truncated_output(self, repl):
         """Should indicate when output is truncated."""
-        from unittest.mock import AsyncMock, patch, MagicMock
+        from unittest.mock import AsyncMock, patch
+
         from rlm.core.types import REPLResult
 
         # Create a mock result with truncated flag
@@ -322,6 +323,7 @@ class TestGetReplContextEdgeCases:
     @pytest.mark.asyncio
     async def test_get_context_with_non_json_serializable(self, repl):
         """Should handle non-JSON-serializable values using repr."""
+
         # Create a custom object that can't be JSON serialized
         class CustomObj:
             def __repr__(self):

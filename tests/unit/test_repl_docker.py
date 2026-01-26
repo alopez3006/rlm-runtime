@@ -1,9 +1,7 @@
 """Tests for Docker REPL sandbox."""
 
 import asyncio
-from pathlib import Path
-from unittest.mock import MagicMock, patch, AsyncMock
-import json
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -245,7 +243,7 @@ class TestDockerREPLExecution:
     @patch("rlm.repl.docker.docker")
     async def test_execute_with_container_error(self, mock_docker):
         """Should handle container errors."""
-        from rlm.repl.docker import DockerREPL, ContainerError
+        from rlm.repl.docker import ContainerError, DockerREPL
 
         mock_client = MagicMock()
         mock_docker.from_env.return_value = mock_client

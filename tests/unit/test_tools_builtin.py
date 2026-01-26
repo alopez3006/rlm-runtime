@@ -6,10 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from rlm.tools.builtin import (
-    get_builtin_tools,
     _create_execute_code_tool,
-    _create_file_read_tool,
-    _create_list_files_tool,
+    get_builtin_tools,
 )
 
 
@@ -296,4 +294,7 @@ class TestPathValidation:
         # Try to access parent directory
         result = await file_read.handler(path=str(tmp_path.parent / "etc" / "passwd"))
         assert result.get("error") is not None
-        assert "outside allowed" in result["error"].lower() or "access denied" in result["error"].lower()
+        assert (
+            "outside allowed" in result["error"].lower()
+            or "access denied" in result["error"].lower()
+        )

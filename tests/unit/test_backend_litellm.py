@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from rlm.backends.litellm import LiteLLMBackend
 from rlm.backends.base import Tool
+from rlm.backends.litellm import LiteLLMBackend
 from rlm.core.types import Message, ToolCall
 
 
@@ -78,9 +78,7 @@ class TestMessagesToOpenAI:
             Message(
                 role="assistant",
                 content=None,
-                tool_calls=[
-                    ToolCall(id="tc1", name="get_weather", arguments={"city": "London"})
-                ],
+                tool_calls=[ToolCall(id="tc1", name="get_weather", arguments={"city": "London"})],
             )
         ]
         result = backend._messages_to_openai(messages)
@@ -93,9 +91,7 @@ class TestMessagesToOpenAI:
 
     def test_tool_result_message(self, backend):
         """Should convert tool result message."""
-        messages = [
-            Message(role="tool", content="Temperature: 20C", tool_call_id="tc1")
-        ]
+        messages = [Message(role="tool", content="Temperature: 20C", tool_call_id="tc1")]
         result = backend._messages_to_openai(messages)
 
         assert result[0]["role"] == "tool"
@@ -327,6 +323,7 @@ class TestStream:
     @pytest.mark.asyncio
     async def test_basic_streaming(self, backend):
         """Should stream content chunks."""
+
         async def mock_stream():
             chunks = ["Hello", " ", "World", "!"]
             for chunk_text in chunks:
@@ -348,6 +345,7 @@ class TestStream:
     @pytest.mark.asyncio
     async def test_streaming_skips_empty_chunks(self, backend):
         """Should skip chunks with no content."""
+
         async def mock_stream():
             chunk1 = MagicMock()
             chunk1.choices = [MagicMock()]
@@ -377,6 +375,7 @@ class TestStream:
     @pytest.mark.asyncio
     async def test_streaming_with_tools(self, backend):
         """Should pass tools in streaming request."""
+
         async def mock_stream():
             chunk = MagicMock()
             chunk.choices = [MagicMock()]

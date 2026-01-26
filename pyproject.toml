@@ -71,6 +71,7 @@ ignore = [
     "C408",   # Unnecessary dict() call (common with plotly)
     "SIM105", # Use contextlib.suppress (stylistic)
     "SIM108", # Use ternary operator (readability)
+    "SIM117", # Nested with statements (more readable for patches)
 ]
 
 [tool.mypy]

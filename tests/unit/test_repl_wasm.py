@@ -1,8 +1,9 @@
 """Tests for WebAssembly REPL using Pyodide."""
 
 import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 
 class TestWasmREPLInit:
@@ -81,9 +82,11 @@ class TestEnsurePyodide:
         repl = WasmREPL()
 
         with patch.dict("sys.modules", {"pyodide": MagicMock(loadPyodide=mock_load_pyodide)}):
-            with patch("rlm.repl.wasm.WasmREPL._ensure_pyodide", new_callable=AsyncMock) as mock_ensure:
+            with patch(
+                "rlm.repl.wasm.WasmREPL._ensure_pyodide", new_callable=AsyncMock
+            ) as mock_ensure:
                 mock_ensure.return_value = mock_pyodide
-                result = await repl._ensure_pyodide()
+                await repl._ensure_pyodide()
 
                 # The mock should be called
                 mock_ensure.assert_called_once()
@@ -157,13 +160,17 @@ class TestWasmREPLExecute:
         repl = WasmREPL()
         repl._pyodide = mock_pyodide
 
-        with patch.object(repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide):
-            with patch("asyncio.to_thread", new_callable=AsyncMock, return_value=None):
-                result = await repl.execute("print('Hello, World!')")
+        with (
+            patch.object(
+                repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide
+            ),
+            patch("asyncio.to_thread", new_callable=AsyncMock, return_value=None),
+        ):
+            result = await repl.execute("print('Hello, World!')")
 
-                assert result.output == "Hello, World!"
-                assert result.error is None
-                assert result.execution_time_ms >= 0
+            assert result.output == "Hello, World!"
+            assert result.error is None
+            assert result.execution_time_ms >= 0
 
     @pytest.mark.asyncio
     async def test_execute_with_result(self):
@@ -180,11 +187,15 @@ class TestWasmREPLExecute:
         repl = WasmREPL()
         repl._pyodide = mock_pyodide
 
-        with patch.object(repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide):
-            with patch("asyncio.to_thread", new_callable=AsyncMock, return_value=42):
-                result = await repl.execute("2 + 2")
+        with (
+            patch.object(
+                repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide
+            ),
+            patch("asyncio.to_thread", new_callable=AsyncMock, return_value=42),
+        ):
+            result = await repl.execute("2 + 2")
 
-                assert "42" in result.output or "result" in result.output
+            assert "42" in result.output or "result" in result.output
 
     @pytest.mark.asyncio
     async def test_execute_with_stderr(self):
@@ -201,11 +212,15 @@ class TestWasmREPLExecute:
         repl = WasmREPL()
         repl._pyodide = mock_pyodide
 
-        with patch.object(repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide):
-            with patch("asyncio.to_thread", new_callable=AsyncMock, return_value=None):
-                result = await repl.execute("import warnings")
+        with (
+            patch.object(
+                repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide
+            ),
+            patch("asyncio.to_thread", new_callable=AsyncMock, return_value=None),
+        ):
+            result = await repl.execute("import warnings")
 
-                assert result.error == "Warning: deprecated"
+            assert result.error == "Warning: deprecated"
 
     @pytest.mark.asyncio
     async def test_execute_handles_exception(self):
@@ -218,12 +233,20 @@ class TestWasmREPLExecute:
         repl = WasmREPL()
         repl._pyodide = mock_pyodide
 
-        with patch.object(repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide):
-            with patch("asyncio.to_thread", new_callable=AsyncMock, side_effect=RuntimeError("Execution failed")):
-                result = await repl.execute("raise RuntimeError('test')")
+        with (
+            patch.object(
+                repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide
+            ),
+            patch(
+                "asyncio.to_thread",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("Execution failed"),
+            ),
+        ):
+            result = await repl.execute("raise RuntimeError('test')")
 
-                assert result.error is not None
-                assert "Execution failed" in result.error
+            assert result.error is not None
+            assert "Execution failed" in result.error
 
     @pytest.mark.asyncio
     async def test_execute_without_top_level_await(self):
@@ -240,14 +263,18 @@ class TestWasmREPLExecute:
         repl = WasmREPL(allow_top_level_await=False)
         repl._pyodide = mock_pyodide
 
-        with patch.object(repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide):
-            with patch("asyncio.to_thread", new_callable=AsyncMock, return_value=None) as mock_thread:
-                result = await repl.execute("x = 1")
+        with (
+            patch.object(
+                repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide
+            ),
+            patch("asyncio.to_thread", new_callable=AsyncMock, return_value=None) as mock_thread,
+        ):
+            await repl.execute("x = 1")
 
-                # Should call runPython, not runPythonAsync
-                mock_thread.assert_called()
-                call_args = mock_thread.call_args
-                assert call_args[0][0] == mock_pyodide.runPython
+            # Should call runPython, not runPythonAsync
+            mock_thread.assert_called()
+            call_args = mock_thread.call_args
+            assert call_args[0][0] == mock_pyodide.runPython
 
     @pytest.mark.asyncio
     async def test_execute_handles_execution_timeout(self):
@@ -262,12 +289,16 @@ class TestWasmREPLExecute:
         repl = WasmREPL(timeout=1)
         repl._pyodide = mock_pyodide
 
-        with patch.object(repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide):
-            with patch("asyncio.to_thread", side_effect=slow_execution):
-                result = await repl.execute("import time; time.sleep(100)")
+        with (
+            patch.object(
+                repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide
+            ),
+            patch("asyncio.to_thread", side_effect=slow_execution),
+        ):
+            result = await repl.execute("import time; time.sleep(100)")
 
-                assert result.error is not None
-                assert "timed out" in result.error.lower()
+            assert result.error is not None
+            assert "timed out" in result.error.lower()
 
     @pytest.mark.asyncio
     async def test_execute_truncates_long_output(self):
@@ -286,13 +317,17 @@ class TestWasmREPLExecute:
         repl = WasmREPL()
         repl._pyodide = mock_pyodide
 
-        with patch.object(repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide):
-            with patch("asyncio.to_thread", new_callable=AsyncMock, return_value=None):
-                result = await repl.execute("print('x' * 150000)")
+        with (
+            patch.object(
+                repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide
+            ),
+            patch("asyncio.to_thread", new_callable=AsyncMock, return_value=None),
+        ):
+            result = await repl.execute("print('x' * 150000)")
 
-                assert len(result.output) <= 100_100  # max_output + some extra for message
-                assert "truncated" in result.output.lower()
-                assert result.truncated is True
+            assert len(result.output) <= 100_100  # max_output + some extra for message
+            assert "truncated" in result.output.lower()
+            assert result.truncated is True
 
 
 class TestWasmREPLReset:
@@ -353,7 +388,9 @@ class TestWasmREPLInstallPackage:
 
         repl = WasmREPL()
 
-        with patch.object(repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide):
+        with patch.object(
+            repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide
+        ):
             result = await repl.install_package("numpy")
 
             assert result["success"] is True
@@ -371,7 +408,9 @@ class TestWasmREPLInstallPackage:
 
         repl = WasmREPL()
 
-        with patch.object(repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide):
+        with patch.object(
+            repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide
+        ):
             result = await repl.install_package("nonexistent-package")
 
             assert result["success"] is False
@@ -384,7 +423,9 @@ class TestWasmREPLInstallPackage:
 
         repl = WasmREPL()
 
-        with patch.object(repl, "_ensure_pyodide", new_callable=AsyncMock, side_effect=ImportError("No pyodide")):
+        with patch.object(
+            repl, "_ensure_pyodide", new_callable=AsyncMock, side_effect=ImportError("No pyodide")
+        ):
             result = await repl.install_package("numpy")
 
             assert result["success"] is False
@@ -396,20 +437,20 @@ class TestWasmREPLInheritance:
 
     def test_inherits_from_base_repl(self):
         """Should inherit from BaseREPL."""
-        from rlm.repl.wasm import WasmREPL
         from rlm.repl.base import BaseREPL
+        from rlm.repl.wasm import WasmREPL
 
         assert issubclass(WasmREPL, BaseREPL)
 
     def test_execute_returns_repl_result(self):
         """Should return REPLResult type."""
         from rlm.repl.wasm import WasmREPL
-        from rlm.core.types import REPLResult
 
         repl = WasmREPL()
 
         # Just verify the type annotation exists
         import inspect
-        sig = inspect.signature(repl.execute)
+
+        inspect.signature(repl.execute)
         # execute should be an async method
         assert asyncio.iscoroutinefunction(repl.execute)

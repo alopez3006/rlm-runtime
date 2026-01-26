@@ -1,14 +1,11 @@
 """Tests for RLM CLI commands."""
 
 import json
-from pathlib import Path
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from typer.testing import CliRunner
 
 from rlm.cli.main import app
-
 
 runner = CliRunner()
 
@@ -144,7 +141,13 @@ class TestLogsCommand:
         """Should output JSON with --json flag."""
         mock_logger = MagicMock()
         mock_logger.list_recent.return_value = [
-            {"id": "test-id", "timestamp": "2024-01-15T12:00:00", "calls": 1, "tokens": 100, "duration_ms": 500}
+            {
+                "id": "test-id",
+                "timestamp": "2024-01-15T12:00:00",
+                "calls": 1,
+                "tokens": 100,
+                "duration_ms": 500,
+            }
         ]
         mock_logger_class.return_value = mock_logger
 
@@ -164,6 +167,7 @@ class TestRunCommand:
     def test_basic_run(self, mock_rlm_class, mock_load_config):
         """Should run completion with prompt."""
         from rlm.core.config import RLMConfig
+
         mock_load_config.return_value = RLMConfig()
         mock_rlm = MagicMock()
         mock_result = MagicMock()
@@ -187,6 +191,7 @@ class TestRunCommand:
     def test_run_import_error(self, mock_rlm_class, mock_load_config):
         """Should handle import errors gracefully."""
         from rlm.core.config import RLMConfig
+
         mock_load_config.return_value = RLMConfig()
         mock_rlm_class.side_effect = ImportError("Docker not available")
 
@@ -202,7 +207,7 @@ class TestMcpServeCommand:
     @patch("rlm.mcp.run_server")
     def test_starts_mcp_server(self, mock_run_server):
         """Should start MCP server."""
-        result = runner.invoke(app, ["mcp-serve"])
+        runner.invoke(app, ["mcp-serve"])
 
         mock_run_server.assert_called_once()
 
@@ -233,13 +238,19 @@ class TestVisualizeCommand:
 
     def test_handles_missing_streamlit(self):
         """Should handle missing Streamlit gracefully."""
-        with patch.dict("sys.modules", {"streamlit": None, "streamlit.web": None, "streamlit.web.cli": None}):
+        with patch.dict(
+            "sys.modules", {"streamlit": None, "streamlit.web": None, "streamlit.web.cli": None}
+        ):
             # This will likely fail with import error
             result = runner.invoke(app, ["visualize"])
 
             # Either succeeds or fails gracefully
             if result.exit_code != 0:
-                assert "Visualizer" in result.stdout or "streamlit" in result.stdout.lower() or "Error" in result.stdout
+                assert (
+                    "Visualizer" in result.stdout
+                    or "streamlit" in result.stdout.lower()
+                    or "Error" in result.stdout
+                )
 
 
 class TestInitCommandEdgeCases:

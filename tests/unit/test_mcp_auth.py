@@ -3,18 +3,14 @@
 import json
 import os
 from datetime import datetime, timedelta
-from pathlib import Path
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import patch
 
 from rlm.mcp.auth import (
-    load_snipara_tokens,
-    get_snipara_token,
-    get_snipara_auth,
-    get_auth_status,
     format_auth_instructions,
-    SNIPARA_TOKEN_FILE,
+    get_auth_status,
+    get_snipara_auth,
+    get_snipara_token,
+    load_snipara_tokens,
 )
 
 
@@ -178,10 +174,13 @@ class TestGetSniparaAuth:
     def test_returns_api_key_when_no_oauth(self, tmp_path):
         """Should fall back to API key when no OAuth token."""
         with patch("rlm.mcp.auth.SNIPARA_TOKEN_FILE", tmp_path / "nonexistent.json"):
-            with patch.dict(os.environ, {
-                "SNIPARA_API_KEY": "rlm_test_key",
-                "SNIPARA_PROJECT_SLUG": "env-project",
-            }):
+            with patch.dict(
+                os.environ,
+                {
+                    "SNIPARA_API_KEY": "rlm_test_key",
+                    "SNIPARA_PROJECT_SLUG": "env-project",
+                },
+            ):
                 auth_header, project_slug = get_snipara_auth()
                 assert auth_header == "rlm_test_key"
                 assert project_slug == "env-project"

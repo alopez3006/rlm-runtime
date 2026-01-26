@@ -1,6 +1,5 @@
 """Unit tests for core types."""
 
-import pytest
 from uuid import uuid4
 
 from rlm.core.types import (
