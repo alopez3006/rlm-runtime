@@ -16,7 +16,7 @@ except ImportError:
     HAS_RESOURCE = False
 
 from RestrictedPython import compile_restricted, safe_builtins
-from RestrictedPython.Eval import default_guarded_getiter, default_guarded_getitem
+from RestrictedPython.Eval import default_guarded_getitem, default_guarded_getiter
 from RestrictedPython.Guards import guarded_iter_unpack_sequence, safer_getattr
 from RestrictedPython.PrintCollector import PrintCollector as RestrictedPrintCollector
 
@@ -182,10 +182,10 @@ class LocalREPL(BaseREPL):
             end_resources = self._get_resource_usage()
 
             # Calculate resource deltas
-            cpu_time_ms = None
-            memory_peak_bytes = None
+            cpu_time_ms: int | None = None
+            memory_peak_bytes: int | None = None
             if start_resources and end_resources:
-                cpu_time_ms = end_resources[0] - start_resources[0]
+                cpu_time_ms = int(end_resources[0] - start_resources[0])
                 # Memory is peak, not delta - report the current peak
                 memory_peak_bytes = end_resources[1]
 

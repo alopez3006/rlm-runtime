@@ -1,5 +1,6 @@
 """RLM Runtime - Recursive Language Model execution environment."""
 
+from rlm.core.config import RLMConfig, load_config
 from rlm.core.orchestrator import RLM
 from rlm.core.types import (
     CompletionOptions,
@@ -10,7 +11,6 @@ from rlm.core.types import (
     ToolResult,
     TrajectoryEvent,
 )
-from rlm.core.config import RLMConfig, load_config
 from rlm.tools.base import Tool
 from rlm.tools.registry import ToolRegistry
 

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable, Awaitable
+from typing import Any
 
 from rlm.core.types import Message, ToolCall
 
@@ -86,6 +87,8 @@ class BaseBackend(ABC):
     Implement this class to add support for new LLM providers.
     """
 
+    model: str  # Subclasses must set this
+
     @abstractmethod
     async def complete(
         self,
@@ -106,12 +109,12 @@ class BaseBackend(ABC):
         ...
 
     @abstractmethod
-    async def stream(
+    def stream(
         self,
         messages: list[Message],
         tools: list[Tool] | None = None,
         **kwargs: Any,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncGenerator[str, None]:
         """Stream a completion.
 
         Args:

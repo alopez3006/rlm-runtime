@@ -128,7 +128,7 @@ class TrajectoryLogger:
 
         events: list[TrajectoryEvent] = []
 
-        with open(log_path, "r", encoding="utf-8") as f:
+        with open(log_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -147,7 +147,7 @@ class TrajectoryLogger:
 
     def _parse_event(self, data: dict[str, Any]) -> TrajectoryEvent:
         """Parse a trajectory event from JSON data."""
-        from rlm.core.types import ToolCall, ToolResult, REPLResult
+        from rlm.core.types import REPLResult, ToolCall, ToolResult
 
         return TrajectoryEvent(
             trajectory_id=UUID(data["trajectory_id"]),
@@ -207,7 +207,7 @@ class TrajectoryLogger:
 
         for log_path in log_files:
             try:
-                with open(log_path, "r", encoding="utf-8") as f:
+                with open(log_path, encoding="utf-8") as f:
                     first_line = f.readline().strip()
                     if first_line:
                         data = json.loads(first_line)

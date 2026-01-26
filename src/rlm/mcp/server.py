@@ -23,9 +23,9 @@ from typing import Any
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import (
-    Tool,
-    TextContent,
     CallToolResult,
+    TextContent,
+    Tool,
 )
 
 from rlm.repl.local import LocalREPL
@@ -38,7 +38,7 @@ def create_server() -> Server:
     # Shared REPL state - persists across tool calls
     repl = LocalREPL(timeout=30)
 
-    @server.list_tools()
+    @server.list_tools()  # type: ignore[no-untyped-call,untyped-decorator]
     async def list_tools() -> list[Tool]:
         """List available RLM tools."""
         return [
@@ -111,7 +111,7 @@ def create_server() -> Server:
             ),
         ]
 
-    @server.call_tool()
+    @server.call_tool()  # type: ignore[untyped-decorator]
     async def call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
         """Handle tool calls."""
 
@@ -222,7 +222,7 @@ def run_server() -> None:
     """Run the MCP server using stdio transport."""
     server = create_server()
 
-    async def main():
+    async def main() -> None:
         async with stdio_server() as (read_stream, write_stream):
             await server.run(
                 read_stream,

@@ -75,13 +75,13 @@ class DockerREPL(BaseREPL):
         self.timeout = timeout
         self.network_disabled = network_disabled
         self.workdir_mount = workdir_mount
-        self._client: docker.DockerClient | None = None
+        self._client: docker.DockerClient | None = None  # type: ignore[name-defined]
         self._context: dict[str, Any] = {}
 
-    def _get_client(self) -> docker.DockerClient:
+    def _get_client(self) -> docker.DockerClient:  # type: ignore[name-defined]
         """Get or create Docker client."""
         if self._client is None:
-            self._client = docker.from_env()
+            self._client = docker.from_env()  # type: ignore[attr-defined]
         return self._client
 
     async def _ensure_image(self) -> None:

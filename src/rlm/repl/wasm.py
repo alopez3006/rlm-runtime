@@ -69,17 +69,17 @@ class WasmREPL(BaseREPL):
             return self._pyodide
 
         try:
-            from pyodide import loadPyodide  # type: ignore
+            from pyodide import loadPyodide  # type: ignore[attr-defined]  # noqa: N813
         except ImportError:
             # Try alternative import for different pyodide versions
             try:
-                import pyodide_py as pyodide  # type: ignore
-                loadPyodide = pyodide.loadPyodide
+                import pyodide_py as pyodide
+                loadPyodide = pyodide.loadPyodide  # noqa: N806
             except ImportError:
                 raise ImportError(
                     "Pyodide not installed. Install with: pip install pyodide-py\n"
                     "Or use in browser with: <script src='https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js'></script>"
-                )
+                ) from None
 
         # Load Pyodide runtime
         self._pyodide = await loadPyodide()
@@ -90,15 +90,18 @@ class WasmREPL(BaseREPL):
 
         return self._pyodide
 
-    async def execute(self, code: str) -> REPLResult:
+    async def execute(self, code: str, timeout: int | None = None) -> REPLResult:
         """Execute Python code in the WebAssembly sandbox.
 
         Args:
             code: Python code to execute
+            timeout: Optional timeout in seconds (not implemented for WASM)
 
         Returns:
             REPLResult with output, any errors, and execution time
         """
+        # Note: timeout is not currently implemented for WASM execution
+        _ = timeout  # Unused for now
         import time
 
         start_time = time.time()

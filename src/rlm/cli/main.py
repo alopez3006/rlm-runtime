@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -30,11 +29,11 @@ def run(
     environment: str = typer.Option("local", "--env", "-e", help="REPL environment (local/docker)"),
     max_depth: int = typer.Option(4, "--max-depth", "-d", help="Max recursion depth"),
     token_budget: int = typer.Option(8000, "--token-budget", "-t", help="Token budget"),
-    system: Optional[str] = typer.Option(None, "--system", "-s", help="System message"),
+    system: str | None = typer.Option(None, "--system", "-s", help="System message"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="Config file path"),
+    config_file: Path | None = typer.Option(None, "--config", "-c", help="Config file path"),
     json_output: bool = typer.Option(False, "--json", help="Output result as JSON"),
-):
+) -> None:
     """Run a recursive completion with the RLM runtime."""
     from rlm.core.config import load_config
     from rlm.core.orchestrator import RLM
@@ -52,7 +51,7 @@ def run(
         )
     except ImportError as e:
         console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     options = CompletionOptions(
         max_depth=max_depth,
@@ -91,7 +90,7 @@ def init(
     project_dir: Path = typer.Argument(Path("."), help="Project directory"),
     no_snipara: bool = typer.Option(False, "--no-snipara", help="Skip Snipara setup"),
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing config"),
-):
+) -> None:
     """Initialize RLM configuration in a project."""
     config_path = project_dir / "rlm.toml"
 
@@ -152,11 +151,11 @@ SNIPARA_PROJECT_SLUG=
 
 @app.command()
 def logs(
-    trajectory_id: Optional[str] = typer.Argument(None, help="Trajectory ID to view"),
+    trajectory_id: str | None = typer.Argument(None, help="Trajectory ID to view"),
     log_dir: Path = typer.Option(Path("./logs"), "--dir", "-d", help="Log directory"),
     tail: int = typer.Option(10, "--tail", "-n", help="Number of recent logs to show"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
-):
+) -> None:
     """View trajectory logs."""
     from rlm.logging.trajectory import TrajectoryLogger
 
@@ -215,13 +214,13 @@ def logs(
 
 
 @app.command()
-def version():
+def version() -> None:
     """Show version information."""
     console.print(f"rlm-runtime {__version__}")
 
 
 @app.command("mcp-serve")
-def mcp_serve():
+def mcp_serve() -> None:
     """Start the MCP server for Claude Desktop/Code integration.
 
     This runs the RLM MCP server using stdio transport. Configure it in your
@@ -251,27 +250,29 @@ def mcp_serve():
         from rlm.mcp import run_server
         run_server()
     except ImportError as e:
-        console.print(f"[red]Error:[/red] MCP dependencies not installed")
+        console.print("[red]Error:[/red] MCP dependencies not installed")
         console.print("Install with: pip install rlm-runtime[mcp]")
         console.print(f"Details: {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
 
 @app.command()
 def visualize(
     log_dir: Path = typer.Option(Path("./logs"), "--dir", "-d", help="Log directory"),
     port: int = typer.Option(8501, "--port", "-p", help="Port to run on"),
-):
+) -> None:
     """Launch the trajectory visualizer web UI.
 
     Opens an interactive Streamlit dashboard to explore RLM execution
     trajectories, view token usage, and debug completions.
     """
     try:
-        import streamlit.web.cli as stcli
-        import sys
-        from rlm.visualizer import app as viz_app
         import os
+        import sys
+
+        import streamlit.web.cli as stcli
+
+        from rlm.visualizer import app as viz_app
 
         # Set log directory as environment variable for the app
         os.environ["RLM_LOG_DIR"] = str(log_dir.absolute())
@@ -296,11 +297,11 @@ def visualize(
         console.print("[red]Error:[/red] Visualizer dependencies not installed")
         console.print("Install with: pip install rlm-runtime[visualizer]")
         console.print(f"Details: {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
 
 @app.command()
-def doctor():
+def doctor() -> None:
     """Check RLM runtime setup and dependencies."""
     console.print("[bold]RLM Runtime Doctor[/bold]")
     console.print()
@@ -340,7 +341,7 @@ def doctor():
     # Check Docker
     try:
         import docker
-        client = docker.from_env()
+        client = docker.from_env()  # type: ignore[attr-defined]
         client.ping()
         checks.append(("Docker daemon", True, "running"))
     except Exception as e:

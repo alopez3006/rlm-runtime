@@ -64,7 +64,14 @@ src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
-ignore = ["E501"]
+ignore = [
+    "E501",   # Line too long
+    "B008",   # Function call in argument defaults (typer pattern)
+    "N818",   # Exception name should end with Error (existing API)
+    "C408",   # Unnecessary dict() call (common with plotly)
+    "SIM105", # Use contextlib.suppress (stylistic)
+    "SIM108", # Use ternary operator (readability)
+]
 
 [tool.mypy]
 python_version = "3.10"
@@ -74,6 +81,22 @@ warn_unused_ignores = true
 disallow_untyped_defs = true
 packages = ["rlm"]
 mypy_path = "src"
+
+# Ignore missing stubs for external libraries
+[[tool.mypy.overrides]]
+module = [
+    "RestrictedPython.*",
+    "plotly.*",
+    "docker.*",
+    "streamlit.*",
+    "litellm.*",
+    "mcp.*",
+    "pyodide.*",
+    "pyodide_py.*",
+    "snipara_mcp.*",
+    "tomllib",
+]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

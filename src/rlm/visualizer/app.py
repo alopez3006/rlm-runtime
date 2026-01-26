@@ -4,19 +4,19 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
-import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import streamlit as st
 
 
-def load_trajectory(log_path: Path) -> dict:
+def load_trajectory(log_path: Path) -> dict[str, Any]:
     """Load a trajectory from a JSONL file."""
     metadata = None
     events = []
 
-    with open(log_path, "r", encoding="utf-8") as f:
+    with open(log_path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -30,13 +30,13 @@ def load_trajectory(log_path: Path) -> dict:
     return {"metadata": metadata, "events": events}
 
 
-def list_trajectories(log_dir: Path) -> list[dict]:
+def list_trajectories(log_dir: Path) -> list[dict[str, Any]]:
     """List all trajectories in the log directory."""
     trajectories = []
 
     for log_path in sorted(log_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
         try:
-            with open(log_path, "r", encoding="utf-8") as f:
+            with open(log_path, encoding="utf-8") as f:
                 first_line = f.readline().strip()
                 if first_line:
                     data = json.loads(first_line)
@@ -55,7 +55,7 @@ def list_trajectories(log_dir: Path) -> list[dict]:
     return trajectories
 
 
-def render_event_tree(events: list[dict]) -> go.Figure:
+def render_event_tree(events: list[dict[str, Any]]) -> go.Figure:
     """Render a tree visualization of the trajectory events."""
     if not events:
         return go.Figure()
@@ -87,7 +87,7 @@ def render_event_tree(events: list[dict]) -> go.Figure:
 
     # Calculate positions
     max_depth = max(n["depth"] for n in nodes) + 1
-    depth_counts = {d: 0 for d in range(max_depth)}
+    depth_counts = dict.fromkeys(range(max_depth), 0)
     positions = []
 
     for node in nodes:
@@ -146,7 +146,7 @@ def render_event_tree(events: list[dict]) -> go.Figure:
     return fig
 
 
-def render_token_chart(events: list[dict]) -> go.Figure:
+def render_token_chart(events: list[dict[str, Any]]) -> go.Figure:
     """Render a chart showing token usage across calls."""
     if not events:
         return go.Figure()
@@ -183,7 +183,7 @@ def render_token_chart(events: list[dict]) -> go.Figure:
     return fig
 
 
-def render_duration_chart(events: list[dict]) -> go.Figure:
+def render_duration_chart(events: list[dict[str, Any]]) -> go.Figure:
     """Render a chart showing duration across calls."""
     if not events:
         return go.Figure()
@@ -211,7 +211,7 @@ def render_duration_chart(events: list[dict]) -> go.Figure:
     return fig
 
 
-def render_event_detail(event: dict, index: int) -> None:
+def render_event_detail(event: dict[str, Any], index: int) -> None:
     """Render detailed view of a single event."""
     with st.expander(f"Call {index + 1} (Depth {event['depth']})", expanded=index == 0):
         col1, col2, col3, col4 = st.columns(4)
@@ -230,7 +230,7 @@ def render_event_detail(event: dict, index: int) -> None:
         prompt = event.get("prompt", "")
         if len(prompt) > 500:
             st.code(prompt[:500] + "...", language="text")
-            if st.button(f"Show full prompt", key=f"prompt_{index}"):
+            if st.button("Show full prompt", key=f"prompt_{index}"):
                 st.code(prompt, language="text")
         else:
             st.code(prompt, language="text")
@@ -241,7 +241,7 @@ def render_event_detail(event: dict, index: int) -> None:
             response = event["response"]
             if len(response) > 500:
                 st.code(response[:500] + "...", language="text")
-                if st.button(f"Show full response", key=f"response_{index}"):
+                if st.button("Show full response", key=f"response_{index}"):
                     st.code(response, language="text")
             else:
                 st.code(response, language="text")
@@ -264,7 +264,7 @@ def render_event_detail(event: dict, index: int) -> None:
             st.error(f"Error: {event['error']}")
 
 
-def main():
+def main() -> None:
     """Main Streamlit application."""
     st.set_page_config(
         page_title="RLM Trajectory Visualizer",
@@ -354,7 +354,7 @@ def main():
 
             # Tool usage breakdown
             st.subheader("Tool Usage")
-            tool_counts = {}
+            tool_counts: dict[str, int] = {}
             for event in events:
                 for tc in event.get("tool_calls", []):
                     tool_counts[tc["name"]] = tool_counts.get(tc["name"], 0) + 1

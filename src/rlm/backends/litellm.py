@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator
+from collections.abc import AsyncGenerator
+from typing import Any
 
 import litellm
 from litellm import acompletion
@@ -176,7 +177,7 @@ class LiteLLMBackend(BaseBackend):
         messages: list[Message],
         tools: list[Tool] | None = None,
         **kwargs: Any,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncGenerator[str, None]:
         """Stream a completion using LiteLLM.
 
         Args:

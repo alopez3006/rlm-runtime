@@ -107,7 +107,7 @@ def _create_file_read_tool() -> Tool:
             return {"error": f"Not a file: {path}", "content": None}
 
         try:
-            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            with open(file_path, encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()
 
             total_lines = len(lines)

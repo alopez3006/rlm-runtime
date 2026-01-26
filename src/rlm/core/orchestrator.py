@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import time
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import structlog
 
 from rlm.core.config import RLMConfig, load_config
+from rlm.core.exceptions import (
+    CostBudgetExhausted,
+    MaxDepthExceeded,
+    TokenBudgetExhausted,
+    ToolExecutionError,
+    ToolNotFoundError,
+)
+from rlm.core.pricing import estimate_cost
 from rlm.core.types import (
     CompletionOptions,
     Message,
@@ -17,15 +26,6 @@ from rlm.core.types import (
     ToolResult,
     TrajectoryEvent,
 )
-from rlm.core.exceptions import (
-    MaxDepthExceeded,
-    TokenBudgetExhausted,
-    CostBudgetExhausted,
-    ToolBudgetExhausted,
-    ToolNotFoundError,
-    ToolExecutionError,
-)
-from rlm.core.pricing import estimate_cost
 
 if TYPE_CHECKING:
     from rlm.backends.base import BaseBackend, Tool
@@ -163,7 +163,7 @@ class RLM:
                 raise ImportError(
                     "Docker support requires 'docker' package. "
                     "Install with: pip install rlm-runtime[docker]"
-                )
+                ) from None
 
         if environment == "wasm":
             try:
@@ -174,7 +174,7 @@ class RLM:
                 raise ImportError(
                     "WebAssembly support requires 'pyodide' package. "
                     "Install with: pip install pyodide-py"
-                )
+                ) from None
 
         raise ValueError(f"Unknown environment: {environment}. Supported: local, docker, wasm")
 
@@ -195,8 +195,8 @@ class RLM:
             from snipara_mcp.rlm_tools import get_snipara_tools
 
             tools = get_snipara_tools(
-                api_key=self.config.snipara_api_key,  # type: ignore
-                project_slug=self.config.snipara_project_slug,  # type: ignore
+                api_key=self.config.snipara_api_key,
+                project_slug=self.config.snipara_project_slug,
             )
             for tool in tools:
                 self.tool_registry.register(tool)
@@ -482,10 +482,10 @@ class RLM:
             )
         except Exception as e:
             logger.error("Tool execution failed", tool=tool_call.name, error=str(e))
-            error = ToolExecutionError(tool_call.name, str(e), tool_call.arguments)
+            exec_error = ToolExecutionError(tool_call.name, str(e), tool_call.arguments)
             return ToolResult(
                 tool_call_id=tool_call.id,
-                content=str(error),
+                content=str(exec_error),
                 is_error=True,
             )
 
@@ -493,7 +493,7 @@ class RLM:
         self,
         prompt: str,
         system: str | None = None,
-    ):
+    ) -> AsyncGenerator[str, None]:
         """Stream a simple completion (no tool use).
 
         This method streams tokens as they arrive from the LLM.

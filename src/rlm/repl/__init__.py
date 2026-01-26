@@ -10,7 +10,7 @@ __all__ = [
 
 # Docker REPL is optional - only import if docker package is available
 try:
-    from rlm.repl.docker import DockerREPL
+    from rlm.repl.docker import DockerREPL  # noqa: F401
 
     __all__.append("DockerREPL")
 except ImportError:
@@ -18,7 +18,7 @@ except ImportError:
 
 # WebAssembly REPL is optional - only import if pyodide is available
 try:
-    from rlm.repl.wasm import WasmREPL
+    from rlm.repl.wasm import WasmREPL  # noqa: F401
 
     __all__.append("WasmREPL")
 except ImportError:

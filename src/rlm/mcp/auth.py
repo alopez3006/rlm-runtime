@@ -18,7 +18,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
 # Snipara token storage location (shared with snipara-mcp)
 SNIPARA_TOKEN_DIR = Path.home() / ".snipara"
 SNIPARA_TOKEN_FILE = SNIPARA_TOKEN_DIR / "tokens.json"
@@ -35,8 +34,9 @@ def load_snipara_tokens() -> dict[str, Any]:
         return {}
     try:
         with open(SNIPARA_TOKEN_FILE) as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError):
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
         return {}
 
 
@@ -71,6 +71,10 @@ def get_snipara_token(project_id: str | None = None) -> dict[str, Any] | None:
     if expires_at:
         try:
             exp_time = datetime.fromisoformat(expires_at)
+            # Handle both naive and timezone-aware datetimes
+            # If exp_time is naive, assume it's UTC
+            if exp_time.tzinfo is None:
+                exp_time = exp_time.replace(tzinfo=timezone.utc)
             if exp_time < datetime.now(timezone.utc):
                 # Token expired - try using snipara_mcp to refresh if available
                 refreshed = _try_refresh_token(token_data.get("refresh_token"))
@@ -80,7 +84,7 @@ def get_snipara_token(project_id: str | None = None) -> dict[str, Any] | None:
         except (ValueError, TypeError):
             pass
 
-    return token_data
+    return dict(token_data) if isinstance(token_data, dict) else None
 
 
 def _try_refresh_token(refresh_token: str | None) -> dict[str, Any] | None:
@@ -94,8 +98,9 @@ def _try_refresh_token(refresh_token: str | None) -> dict[str, Any] | None:
         return None
 
     try:
-        from snipara_mcp.auth import refresh_access_token
         import asyncio
+
+        from snipara_mcp.auth import refresh_access_token
         return asyncio.run(refresh_access_token(refresh_token))
     except ImportError:
         # snipara_mcp not installed, can't refresh
@@ -146,7 +151,7 @@ def get_auth_status() -> dict[str, Any]:
     tokens = load_snipara_tokens()
     api_key = os.environ.get("SNIPARA_API_KEY")
 
-    status = {
+    status: dict[str, Any] = {
         "oauth_available": bool(tokens),
         "oauth_projects": [],
         "api_key_available": bool(api_key),
@@ -165,6 +170,10 @@ def get_auth_status() -> dict[str, Any]:
         if expires_at:
             try:
                 exp_time = datetime.fromisoformat(expires_at)
+                # Handle both naive and timezone-aware datetimes
+                # If exp_time is naive, assume it's UTC
+                if exp_time.tzinfo is None:
+                    exp_time = exp_time.replace(tzinfo=timezone.utc)
                 if exp_time < datetime.now(timezone.utc):
                     project_info["valid"] = False
                     project_info["status"] = "expired"
