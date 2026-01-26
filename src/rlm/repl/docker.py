@@ -14,7 +14,32 @@ try:
 
     DOCKER_AVAILABLE = True
 except ImportError:
+    docker = None  # type: ignore[assignment]
     DOCKER_AVAILABLE = False
+
+    # Provide stub classes for type checking and testing
+    class ContainerError(Exception):  # type: ignore[no-redef]
+        """Stub for docker.errors.ContainerError when docker not installed."""
+
+        def __init__(
+            self,
+            container: object = None,
+            exit_status: int = 1,
+            command: str = "",
+            image: str = "",
+            stderr: bytes = b"",
+        ):
+            self.container = container
+            self.exit_status = exit_status
+            self.command = command
+            self.image = image
+            self.stderr = stderr
+            super().__init__(f"Container error: {stderr.decode()}")
+
+    class ImageNotFound(Exception):  # type: ignore[no-redef]
+        """Stub for docker.errors.ImageNotFound when docker not installed."""
+
+        pass
 
 from rlm.core.types import REPLResult
 from rlm.repl.base import BaseREPL
