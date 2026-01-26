@@ -10,7 +10,6 @@ from rlm.tools.builtin import (
     _create_execute_code_tool,
     _create_file_read_tool,
     _create_list_files_tool,
-    register,
 )
 
 
@@ -99,9 +98,13 @@ class TestFileReadTool:
     """Tests for file_read tool."""
 
     @pytest.fixture
-    def tool(self):
-        """Create file_read tool."""
-        return _create_file_read_tool()
+    def tool(self, tmp_path):
+        """Create file_read tool with tmp_path allowed."""
+        # Get tools with tmp_path as allowed path for testing
+        mock_repl = MagicMock()
+        tools = get_builtin_tools(mock_repl, allowed_paths=[tmp_path])
+        # file_read is the second tool (index 1)
+        return tools[1]
 
     @pytest.fixture
     def test_file(self, tmp_path):
@@ -181,9 +184,13 @@ class TestListFilesTool:
     """Tests for list_files tool."""
 
     @pytest.fixture
-    def tool(self):
-        """Create list_files tool."""
-        return _create_list_files_tool()
+    def tool(self, tmp_path):
+        """Create list_files tool with tmp_path allowed."""
+        # Get tools with tmp_path as allowed path for testing
+        mock_repl = MagicMock()
+        tools = get_builtin_tools(mock_repl, allowed_paths=[tmp_path])
+        # list_files is the third tool (index 2)
+        return tools[2]
 
     @pytest.fixture
     def test_dir(self, tmp_path):
@@ -276,10 +283,17 @@ class TestListFilesTool:
         assert file_info["is_dir"] is False
 
 
-class TestRegister:
-    """Tests for register function."""
+class TestPathValidation:
+    """Tests for path validation security."""
 
-    def test_register_does_not_raise(self):
-        """Register should not raise errors."""
-        mock_registry = MagicMock()
-        register(mock_registry)  # Should not raise
+    @pytest.mark.asyncio
+    async def test_path_traversal_blocked(self, tmp_path: Path):
+        """Should block path traversal attempts."""
+        # Create a test file outside allowed paths
+        tools = get_builtin_tools(MagicMock(), allowed_paths=[tmp_path])
+        file_read = tools[1]  # file_read tool
+
+        # Try to access parent directory
+        result = await file_read.handler(path=str(tmp_path.parent / "etc" / "passwd"))
+        assert result.get("error") is not None
+        assert "outside allowed" in result["error"].lower() or "access denied" in result["error"].lower()

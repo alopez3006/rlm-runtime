@@ -2,11 +2,64 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+@dataclass(frozen=True)
+class ExecutionProfile:
+    """Predefined execution profile with resource limits."""
+
+    timeout: int  # Seconds
+    memory: str  # Docker memory limit (e.g., "512m", "2g")
+    description: str
+
+
+# Built-in execution profiles
+EXECUTION_PROFILES: dict[str, ExecutionProfile] = {
+    "quick": ExecutionProfile(
+        timeout=5,
+        memory="128m",
+        description="Fast operations: simple math, string manipulation",
+    ),
+    "default": ExecutionProfile(
+        timeout=30,
+        memory="512m",
+        description="Standard operations: data processing, algorithms",
+    ),
+    "analysis": ExecutionProfile(
+        timeout=120,
+        memory="2g",
+        description="Heavy computation: large datasets, complex algorithms",
+    ),
+    "extended": ExecutionProfile(
+        timeout=300,
+        memory="4g",
+        description="Long-running tasks: batch processing, extensive analysis",
+    ),
+}
+
+
+def get_profile(name: str) -> ExecutionProfile:
+    """Get an execution profile by name.
+
+    Args:
+        name: Profile name (quick, default, analysis, extended)
+
+    Returns:
+        ExecutionProfile with timeout and memory settings
+
+    Raises:
+        ValueError: If profile name is unknown
+    """
+    if name not in EXECUTION_PROFILES:
+        available = ", ".join(EXECUTION_PROFILES.keys())
+        raise ValueError(f"Unknown profile '{name}'. Available: {available}")
+    return EXECUTION_PROFILES[name]
 
 
 class RLMConfig(BaseSettings):
@@ -45,6 +98,10 @@ class RLMConfig(BaseSettings):
     token_budget: int = 8000
     tool_budget: int = 20
     timeout_seconds: int = 120
+
+    # Security: File access restrictions
+    # Paths that file tools can access. Empty list means current directory only.
+    allowed_paths: list[Path] = Field(default_factory=list)
 
     # Logging
     log_dir: Path = Field(default_factory=lambda: Path("./logs"))
@@ -134,6 +191,10 @@ def save_config(config: RLMConfig, config_path: Path) -> None:
         f'docker_image = "{config.docker_image}"',
         f"docker_cpus = {config.docker_cpus}",
         f'docker_memory = "{config.docker_memory}"',
+        "",
+        "# Security: File access restrictions",
+        "# Paths that file tools can access. Empty list means current directory only.",
+        f'allowed_paths = {[str(p) for p in config.allowed_paths]}',
         "",
         "# Snipara integration (optional)",
         "# Get your API key at https://snipara.com/dashboard",

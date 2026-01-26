@@ -345,7 +345,7 @@ class TestWasmREPLInstallPackage:
 
     @pytest.mark.asyncio
     async def test_install_package_success(self):
-        """Should return True on successful installation."""
+        """Should return success dict on successful installation."""
         from rlm.repl.wasm import WasmREPL
 
         mock_pyodide = MagicMock()
@@ -356,27 +356,30 @@ class TestWasmREPLInstallPackage:
         with patch.object(repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide):
             result = await repl.install_package("numpy")
 
-            assert result is True
+            assert result["success"] is True
+            assert "message" in result
             mock_pyodide.loadPackagesFromImports.assert_called_once_with(["numpy"])
 
     @pytest.mark.asyncio
     async def test_install_package_failure(self):
-        """Should return False on installation failure."""
+        """Should return failure dict on installation failure."""
         from rlm.repl.wasm import WasmREPL
 
         mock_pyodide = MagicMock()
         mock_pyodide.loadPackagesFromImports = AsyncMock(side_effect=Exception("Package not found"))
+        mock_pyodide.runPythonAsync = AsyncMock(side_effect=Exception("Package not found"))
 
         repl = WasmREPL()
 
         with patch.object(repl, "_ensure_pyodide", new_callable=AsyncMock, return_value=mock_pyodide):
             result = await repl.install_package("nonexistent-package")
 
-            assert result is False
+            assert result["success"] is False
+            assert "error" in result
 
     @pytest.mark.asyncio
     async def test_install_package_pyodide_init_fails(self):
-        """Should return False if Pyodide init fails."""
+        """Should return failure dict if Pyodide init fails."""
         from rlm.repl.wasm import WasmREPL
 
         repl = WasmREPL()
@@ -384,7 +387,8 @@ class TestWasmREPLInstallPackage:
         with patch.object(repl, "_ensure_pyodide", new_callable=AsyncMock, side_effect=ImportError("No pyodide")):
             result = await repl.install_package("numpy")
 
-            assert result is False
+            assert result["success"] is False
+            assert "error" in result
 
 
 class TestWasmREPLInheritance:

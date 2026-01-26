@@ -242,21 +242,75 @@ for _name in list(globals().keys()):
             except Exception:
                 pass
 
-    async def install_package(self, package: str) -> bool:
-        """Install a package using micropip.
+    async def install_package(self, package: str) -> dict[str, Any]:
+        """Install a pure-Python package using micropip.
+
+        This uses Pyodide's micropip to install packages from PyPI.
+        Only pure-Python packages (no C extensions) can be installed.
 
         Args:
-            package: Package name to install
+            package: Package name to install (can include version: "requests>=2.28")
 
         Returns:
-            True if installation succeeded
+            Dict with 'success' boolean and 'message' or 'error'
+
+        Example:
+            >>> result = await repl.install_package("requests")
+            >>> print(result)
+            {'success': True, 'message': 'Installed requests'}
         """
         try:
             pyodide = await self._ensure_pyodide()
-            await pyodide.loadPackagesFromImports([package])
-            return True
+
+            # First try to load if it's a pre-bundled package (numpy, pandas, etc.)
+            try:
+                await pyodide.loadPackagesFromImports([package.split(">=")[0].split("==")[0]])
+                return {
+                    "success": True,
+                    "message": f"Loaded bundled package: {package}",
+                }
+            except Exception:
+                pass  # Not bundled, try micropip
+
+            # Use micropip for pure-Python packages
+            install_code = f"""
+import micropip
+await micropip.install("{package}")
+"""
+            await pyodide.runPythonAsync(install_code)
+            return {
+                "success": True,
+                "message": f"Installed {package} via micropip",
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            # Provide helpful error messages
+            if "C extension" in error_msg or "binary" in error_msg.lower():
+                return {
+                    "success": False,
+                    "error": f"Cannot install {package}: requires C extensions (not supported in WASM)",
+                }
+            return {
+                "success": False,
+                "error": f"Failed to install {package}: {error_msg}",
+            }
+
+    async def list_installed_packages(self) -> list[str]:
+        """List packages installed in the Pyodide environment.
+
+        Returns:
+            List of installed package names
+        """
+        try:
+            pyodide = await self._ensure_pyodide()
+            result = pyodide.runPython("""
+import micropip
+list(micropip.list().keys())
+""")
+            return list(result.to_py()) if hasattr(result, "to_py") else list(result)
         except Exception:
-            return False
+            return []
 
     def get_context(self) -> dict[str, Any]:
         """Get the current shared context.

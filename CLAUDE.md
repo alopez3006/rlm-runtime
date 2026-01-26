@@ -15,10 +15,10 @@ RLM Runtime is a **Recursive Language Model runtime** with sandboxed REPL execut
 │  • Coordinates LLM calls and tool execution                     │
 │  • Tracks API costs in real-time via pricing module             │
 ├─────────────────────────────────────────────────────────────────┤
-│  LLM Backends              │  REPL Environments                 │
-│  • LiteLLM (100+ providers)│  • Local (RestrictedPython)        │
-│  • OpenAI                  │  • Docker (isolated)               │
-│  • Anthropic               │  • WebAssembly (Pyodide)           │
+│  LLM Backend (LiteLLM)     │  REPL Environments                 │
+│  • OpenAI models           │  • Local (RestrictedPython)        │
+│  • Anthropic models        │  • Docker (isolated)               │
+│  • 100+ other providers    │  • WebAssembly (Pyodide)           │
 ├─────────────────────────────────────────────────────────────────┤
 │  Tool Registry             │  MCP Server                        │
 │  • execute_code            │  • execute_python (sandbox)        │
@@ -39,9 +39,7 @@ src/rlm/
 │   └── pricing.py           # Model pricing for cost estimation
 ├── backends/                # LLM provider integrations
 │   ├── base.py              # Abstract backend class
-│   ├── litellm.py           # LiteLLM (100+ providers)
-│   ├── openai.py            # OpenAI direct
-│   └── anthropic.py         # Anthropic direct
+│   └── litellm.py           # LiteLLM (unified backend for all providers)
 ├── repl/                    # Code execution environments
 │   ├── local.py             # RestrictedPython sandbox
 │   ├── docker.py            # Docker container isolation
@@ -65,9 +63,13 @@ The MCP server is designed to work within Claude Code without external API costs
 # src/rlm/mcp/server.py - Key tools
 Tools:
 - execute_python: Sandboxed code execution (RestrictedPython)
-- get_repl_context: Get persistent variables
-- set_repl_context: Set persistent variables
-- clear_repl_context: Reset state
+  - session_id: Isolated context per session
+  - profile: quick/default/analysis/extended resource limits
+- get_repl_context: Get persistent variables from session
+- set_repl_context: Set persistent variables in session
+- clear_repl_context: Reset session state
+- list_sessions: List all active sessions with metadata
+- destroy_session: Destroy a session and free resources
 ```
 
 **Why zero API keys?**
@@ -77,21 +79,216 @@ Tools:
 
 ## REPL Environments
 
-### Local (RestrictedPython)
-- Fast, no setup required
-- Limited isolation
-- Best for development/trusted code
+The REPL system provides three execution environments with different isolation levels and tradeoffs.
 
-### Docker
-- Full container isolation
-- Configurable resources (CPU, memory)
-- Network disabled by default
-- Best for production/untrusted code
+### Local Mode (RestrictedPython)
 
-### WebAssembly (Pyodide)
-- Browser-compatible sandbox
-- No Docker required
-- Portable across platforms
+**File:** `src/rlm/repl/local.py`
+
+Uses RestrictedPython for in-process sandboxing:
+
+| Aspect | Details |
+|--------|---------|
+| **Isolation** | Software-based via RestrictedPython guards |
+| **Mechanism** | Compiles code with `compile_restricted()`, executes in controlled namespace |
+| **Import restrictions** | Whitelist of safe modules only |
+| **Attribute access** | Guarded via `safer_getattr`, `guarded_getitem`, `guarded_getiter` |
+| **Performance** | Fast (~0ms startup) - runs in same process |
+| **Setup** | No setup required |
+| **Resource tracking** | CPU time + peak memory (Unix only via `resource` module) |
+| **Context storage** | Python objects stored directly in `_context` dict |
+
+**Security note:** This provides defense-in-depth but is NOT a complete sandbox. For untrusted code, use DockerREPL instead.
+
+```python
+from rlm.repl.local import LocalREPL
+
+repl = LocalREPL(timeout=30)
+result = await repl.execute("print(sum(range(100)))")
+print(result.output)  # "4950\n"
+print(f"CPU: {result.cpu_time_ms}ms, Memory: {result.memory_peak_bytes} bytes")
+```
+
+### Docker Mode (Container Isolation)
+
+**File:** `src/rlm/repl/docker.py`
+
+Uses Docker containers for OS-level isolation:
+
+| Aspect | Details |
+|--------|---------|
+| **Isolation** | Full container isolation (separate filesystem, network, processes) |
+| **Mechanism** | Spins up new container per execution, runs script, destroys container |
+| **Network** | Disabled by default (`network_disabled=True`) |
+| **Resource limits** | Hard limits via `cpu_quota` and `mem_limit` (container killed if exceeded) |
+| **Filesystem** | Read-only mounts, automatic cleanup |
+| **Performance** | Slower (~100-500ms startup) - container overhead |
+| **Setup** | Requires Docker daemon + `pip install rlm-runtime[docker]` |
+| **Context storage** | Must be JSON-serializable (passed via temp file to container) |
+
+```python
+from rlm.repl.docker import DockerREPL
+
+repl = DockerREPL(
+    image="python:3.11-slim",
+    cpus=1.0,
+    memory="512m",
+    network_disabled=True,
+)
+result = await repl.execute("print(sum(range(100)))")
+```
+
+### WebAssembly Mode (Pyodide)
+
+**File:** `src/rlm/repl/wasm.py`
+
+Uses Pyodide for browser-compatible sandboxing:
+
+| Aspect | Details |
+|--------|---------|
+| **Isolation** | WebAssembly sandbox |
+| **Mechanism** | Runs Python via Pyodide in WASM runtime |
+| **Setup** | No Docker required |
+| **Portability** | Works across platforms including browsers |
+
+### Mode Comparison
+
+| Feature | Local | Docker | WebAssembly |
+|---------|-------|--------|-------------|
+| **Security level** | Medium | High | Medium-High |
+| **Startup time** | ~0ms | ~100-500ms | ~1-2s (first load) |
+| **Network access** | Blocked (import) | Blocked (OS) | Blocked (WASM) |
+| **File system** | Blocked (import) | Isolated | Sandboxed |
+| **Process isolation** | None | Full | WASM sandbox |
+| **Memory limits** | Soft (tracking) | Hard (killed) | WASM limits |
+| **Dependencies** | RestrictedPython | Docker daemon | Pyodide |
+| **Best for** | Dev, trusted code | Production, untrusted | Browser, portable |
+
+### Security Level Details
+
+| Mode | Rating | Risk | Mitigation |
+|------|--------|------|------------|
+| **Local** | ⚠️ Medium | RestrictedPython can be bypassed via introspection attacks | Use only for trusted/AI-generated code |
+| **Docker** | ✅ High | Container escape requires kernel exploit | Add seccomp/AppArmor for maximum security |
+| **WASM** | ✅ Medium-High | WASM sandbox is robust but less battle-tested | Good for browser environments |
+
+**Security recommendations:**
+- **Local mode:** Suitable for development and AI-generated code. NOT recommended for arbitrary user input.
+- **Docker mode:** Use for production and untrusted code. Add `--security-opt` flags for defense in depth.
+- **WASM mode:** Good portability with decent isolation. Best for browser-based applications.
+
+### Allowed Imports
+
+**File:** `src/rlm/repl/safety.py`
+
+The sandbox only allows these safe standard library modules:
+
+```python
+ALLOWED_IMPORTS = {
+    # Core utilities
+    "json", "re", "math", "datetime", "time", "uuid",
+    "hashlib", "base64", "string", "textwrap",
+
+    # Collections and iteration
+    "collections", "itertools", "functools", "operator",
+
+    # Data structures
+    "dataclasses", "typing", "enum", "copy",
+
+    # Parsing and math
+    "csv", "statistics", "decimal", "fractions",
+
+    # Path operations (read-only)
+    "pathlib", "posixpath", "ntpath",
+
+    # URL parsing (no requests)
+    "urllib.parse",
+
+    # Text processing
+    "difflib", "unicodedata",
+}
+```
+
+### Blocked Imports
+
+These modules are explicitly blocked for security:
+
+| Category | Blocked Modules |
+|----------|-----------------|
+| **System access** | `os`, `sys`, `subprocess`, `shutil`, `platform`, `signal`, `resource` |
+| **Network** | `socket`, `ssl`, `requests`, `urllib.request`, `http`, `ftplib`, `smtplib` |
+| **Serialization** | `pickle`, `shelve`, `marshal` (can execute arbitrary code) |
+| **Database** | `sqlite3` |
+| **Low-level** | `ctypes`, `cffi`, `mmap` |
+| **Concurrency** | `multiprocessing`, `threading`, `concurrent`, `asyncio` |
+| **Code execution** | `importlib`, `builtins`, `eval`, `exec`, `compile`, `code` |
+| **File operations** | `tempfile`, `fileinput`, `glob`, `fnmatch` |
+| **Debugging** | `pdb`, `bdb`, `trace`, `traceback`, `inspect`, `dis`, `ast` |
+| **Other** | `atexit`, `gc` |
+
+### REPL Limitations
+
+#### No UI/UX or Visualization Support
+
+The REPL is designed for **pure computation only** and cannot render visual output:
+
+**1. No visualization libraries allowed:**
+- `matplotlib` - charts/graphs
+- `PIL/Pillow` - image manipulation
+- `plotly` - interactive visualizations
+- `seaborn` - statistical graphics
+- `tkinter` - GUI widgets
+- `pygame` - graphics/games
+- `svgwrite` - SVG generation
+
+**2. No display mechanism:**
+Both Local and Docker REPLs are headless - there is no browser, window system, or way to render pixels. Output is text-only via `REPLResult.output`.
+
+**3. No file output for images:**
+Cannot save images to disk since `tempfile`, `glob`, and file I/O are blocked.
+
+**4. Design intent:**
+The REPL is intentionally limited to:
+- Math and algorithms
+- Data processing and transformation
+- Text manipulation
+- Logic validation
+- JSON/CSV parsing
+
+#### Workarounds for Visualization
+
+If visualization is needed:
+
+| Approach | Description | Tradeoff |
+|----------|-------------|----------|
+| **Extend allowed imports** | Add matplotlib, PIL to `ALLOWED_IMPORTS` | Security risk |
+| **Return base64 images** | Generate image, encode as base64 text, decode client-side | Complexity |
+| **Generate code as text** | Output HTML/CSS/SVG as strings, render elsewhere | Manual step |
+| **Docker with X11** | Mount display socket or use virtual framebuffer | Complex setup |
+
+#### Output Limits
+
+From `src/rlm/repl/safety.py`:
+
+```python
+MAX_OUTPUT_SIZE = 100_000   # 100KB max output
+MAX_OUTPUT_LINES = 1000     # Max lines
+MAX_EXECUTION_TIME = 30     # Default timeout (seconds)
+MAX_MEMORY_MB = 512         # Docker memory limit
+```
+
+### When to Use Each Mode
+
+| Scenario | Recommended Mode |
+|----------|------------------|
+| Local development | Local |
+| Quick prototyping | Local |
+| Trusted internal code | Local |
+| User-submitted code | Docker |
+| Production workloads | Docker |
+| Browser environments | WebAssembly |
+| CI/CD pipelines | Docker |
+| No Docker available | Local or WebAssembly |
 
 ## Exception Hierarchy
 
@@ -186,6 +383,11 @@ model = "gpt-4o-mini"
 environment = "docker"  # local, docker, wasm
 max_depth = 4
 token_budget = 8000
+timeout_seconds = 120     # Overall completion timeout
+cost_budget_usd = 0.10    # Maximum API cost
+
+# Security: restrict file access to specific paths
+allowed_paths = ["/path/to/project", "/tmp"]
 
 [docker]
 image = "python:3.11-slim"
@@ -440,6 +642,94 @@ For this project (rlm-runtime), Snipara is configured with:
 | Update model pricing | `src/rlm/core/pricing.py` |
 | Modify result types | `src/rlm/core/types.py` |
 
+## Future Features (Not Yet Implemented)
+
+### Visualization Tool for Non-Developers
+
+**Status:** Proposed, not implemented
+
+**Rationale:** The REPL is intentionally limited to pure computation. For non-technical users who need Claude to generate and display visualizations, a separate tool could be useful.
+
+#### Proposed Design
+
+```
+MCP Tools (current + proposed)
+├── execute_python           # Pure computation (restricted sandbox)
+├── get/set/clear_repl_context
+└── generate_visualization   # PROPOSED - creates files, returns path
+```
+
+#### Proposed Tool: `generate_visualization`
+
+```python
+# Example usage by Claude:
+generate_visualization(
+    code="""
+import matplotlib.pyplot as plt
+plt.figure(figsize=(10, 6))
+plt.plot([1, 2, 3, 4], [1, 4, 9, 16])
+plt.title('Sample Chart')
+plt.savefig(OUTPUT_PATH)  # Magic variable injected by tool
+""",
+    format="png",        # png, svg, pdf, html
+    filename="chart",    # optional custom name
+    auto_open=True,      # open in default viewer
+)
+
+# Returns:
+# {"path": "~/.rlm/visualizations/chart_20240124_143052.png", "opened": true}
+```
+
+#### Comparison with REPL
+
+| Aspect | `execute_python` | `generate_visualization` |
+|--------|------------------|--------------------------|
+| **Purpose** | Computation | Visual output |
+| **Imports** | Restricted whitelist | matplotlib, PIL, plotly, seaborn |
+| **File I/O** | Blocked | Writes to controlled output dir only |
+| **Network** | Blocked | Blocked |
+| **Output** | Text (stdout) | File path |
+| **Auto-open** | N/A | Optional (opens in default viewer) |
+
+#### When This Tool Adds Value
+
+| Scenario | Benefit |
+|----------|---------|
+| **Claude-driven iteration** | Claude generates chart → user says "make it blue" → Claude regenerates |
+| **Data flows from REPL** | Compute in `execute_python`, visualize result without copy/paste |
+| **Non-technical users** | Don't need local Python/Jupyter setup |
+| **Reproducible workflow** | Same tool, same output location, logged |
+
+#### When Local Execution is Better
+
+| Scenario | Why |
+|----------|-----|
+| **Complex visualizations** | Need full library access, debugging |
+| **Interactive exploration** | Jupyter notebooks are superior |
+| **One-off charts** | Faster to just run a script |
+| **Custom dependencies** | Any package, any version |
+
+#### Implementation Notes (If Built)
+
+**Files to create:**
+- `src/rlm/repl/visualization.py` - Visualization executor
+- Update `src/rlm/mcp/server.py` - Add new tool
+
+**Security model:**
+- Writes only to controlled directory (`~/.rlm/visualizations/` or configurable)
+- No arbitrary file paths allowed
+- Network still blocked
+- Timeout enforced
+- Allowed libraries: matplotlib, plotly, seaborn, PIL (curated list)
+
+**Dependencies:**
+```toml
+[project.optional-dependencies]
+visualization = ["matplotlib", "plotly", "seaborn", "pillow"]
+```
+
+**Decision:** Not implementing now. For developers, local Python/Jupyter is better. Only build if targeting non-developer users who need Claude to create visualizations.
+
 ## Snipara Context Retrieval Improvement Goals
 
 ### Current Bottlenecks & Solutions
@@ -543,10 +833,25 @@ pip install dist/rlm_runtime-0.2.0-py3-none-any.whl
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.0.0 | Jan 2025 | Major release: persistent sessions, execution profiles, path security, caching |
 | 0.2.0 | Jan 2025 | Cost tracking, budget enforcement, resource monitoring |
 | 0.1.x | Dec 2024 | Initial release with MCP server |
 
 ## Recent Changes
+
+### January 2025 (v2.0.0)
+
+- **Path Traversal Security**: File tools now validate paths against `allowed_paths` config to prevent unauthorized file access
+- **Streaming Cost Tracking**: `stream()` method now accepts `StreamOptions` with cost budget enforcement
+- **Persistent REPL Sessions**: MCP server supports multiple named sessions with `session_id` parameter and TTL-based cleanup
+- **Enhanced Error Context**: LocalREPL provides line numbers, variable state, and suggestions for blocked imports
+- **Execution Profiles**: New `profile` parameter (quick/default/analysis/extended) for preset timeout/memory limits
+- **Result Caching**: LocalREPL caches execution results by code+context hash with LRU eviction
+- **WASM Package Installation**: `install_package()` now uses micropip for pure-Python packages
+- **Timeout Enforcement**: `TimeoutExceeded` exception now raised when `timeout_seconds` is exceeded
+- **New MCP Tools**: `list_sessions`, `destroy_session` for session management
+
+### December 2024 (v0.2.0)
 
 - **Cost Tracking**: New pricing.py module with model pricing data for OpenAI, Anthropic, Google, and Mistral models. RLMResult now includes `total_cost_usd`, `total_input_tokens`, `total_output_tokens`.
 - **Budget Enforcement**: Token budget is now enforced (was a bug - configured but never checked). New `cost_budget_usd` option for cost-based limits.
@@ -557,3 +862,45 @@ pip install dist/rlm_runtime-0.2.0-py3-none-any.whl
 - **WebAssembly REPL**: New wasm.py for Pyodide execution
 - **Exception Hierarchy**: Comprehensive error handling in exceptions.py
 - **Trajectory Visualizer**: Streamlit dashboard for debugging
+
+---
+
+## BMad Method (Global Commands)
+
+BMad Method is available globally across all Claude Code sessions. Use these slash commands for structured workflows.
+
+### Quick Start
+```
+/bmad/core/agents/bmad-master    # Main BMad agent - start here
+/bmad-help                        # Get guidance on what to do next
+```
+
+### Core Workflows
+| Command | Purpose |
+|---------|---------|
+| `/bmad/bmm/workflows/prd` | Create Product Requirements Document |
+| `/bmad/bmm/workflows/create-architecture` | Design system architecture |
+| `/bmad/bmm/workflows/create-story` | Create user stories |
+| `/bmad/bmm/workflows/create-epics-and-stories` | Full epic breakdown |
+| `/bmad/bmm/workflows/dev-story` | Develop/implement a story |
+| `/bmad/bmm/workflows/quick-dev` | Quick development flow |
+| `/bmad/bmm/workflows/sprint-planning` | Sprint planning session |
+
+### Planning & Design
+| Command | Purpose |
+|---------|---------|
+| `/bmad/bmm/workflows/create-product-brief` | Initial product brief |
+| `/bmad/bmm/workflows/check-implementation-readiness` | Verify before coding |
+| `/bmad/core/workflows/brainstorming` | Brainstorming session |
+
+### Documentation & Diagrams
+| Command | Purpose |
+|---------|---------|
+| `/bmad/bmm/workflows/document-project` | Generate project docs |
+| `/bmad/bmm/workflows/create-excalidraw-diagram` | Create diagrams |
+| `/bmad/bmm/workflows/create-excalidraw-flowchart` | Create flowcharts |
+| `/bmad/bmm/workflows/create-excalidraw-wireframe` | Create wireframes |
+| `/bmad/bmm/workflows/create-excalidraw-dataflow` | Create data flow diagrams |
+
+### Installation
+BMad is installed globally at `~/bmad-global/` and symlinked to `~/.claude/commands/bmad/`.

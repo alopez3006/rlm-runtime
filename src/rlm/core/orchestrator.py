@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
@@ -13,6 +14,7 @@ from rlm.core.config import RLMConfig, load_config
 from rlm.core.exceptions import (
     CostBudgetExhausted,
     MaxDepthExceeded,
+    TimeoutExceeded,
     TokenBudgetExhausted,
     ToolExecutionError,
     ToolNotFoundError,
@@ -22,6 +24,7 @@ from rlm.core.types import (
     CompletionOptions,
     Message,
     RLMResult,
+    StreamOptions,
     ToolCall,
     ToolResult,
     TrajectoryEvent,
@@ -182,7 +185,7 @@ class RLM:
         """Register builtin tools."""
         from rlm.tools.builtin import get_builtin_tools
 
-        for tool in get_builtin_tools(self.repl):
+        for tool in get_builtin_tools(self.repl, self.config.allowed_paths):
             self.tool_registry.register(tool)
 
     def _register_snipara_tools(self) -> None:
@@ -261,16 +264,31 @@ class RLM:
                 prompt_length=len(prompt),
             )
 
-        # Execute recursive completion
+        # Execute recursive completion with timeout enforcement
         try:
-            response, events = await self._recursive_complete(
-                messages=messages,
-                trajectory_id=trajectory_id,
-                parent_call_id=None,
-                depth=0,
-                options=options,
-                events=events,
+            response, events = await asyncio.wait_for(
+                self._recursive_complete(
+                    messages=messages,
+                    trajectory_id=trajectory_id,
+                    parent_call_id=None,
+                    depth=0,
+                    options=options,
+                    events=events,
+                ),
+                timeout=float(options.timeout_seconds),
             )
+        except asyncio.TimeoutError:
+            elapsed = time.time() - start_time
+            logger.error(
+                "Completion timed out",
+                timeout=options.timeout_seconds,
+                elapsed=elapsed,
+                trajectory_id=str(trajectory_id),
+            )
+            raise TimeoutExceeded(
+                elapsed_seconds=elapsed,
+                timeout_seconds=options.timeout_seconds,
+            ) from None
         except Exception as e:
             logger.error("Completion failed", error=str(e), trajectory_id=str(trajectory_id))
             events.append(
@@ -399,11 +417,11 @@ class RLM:
                     tool_results.append(
                         ToolResult(
                             tool_call_id=tool_call.id,
-                            content="Error: Tool budget exceeded",
+                            content="Error: Tool budget exceeded. No more tool calls will be executed.",
                             is_error=True,
                         )
                     )
-                    continue
+                    break  # Stop processing additional tool calls
 
                 # Execute tool
                 result = await self._execute_tool(tool_call)
@@ -493,6 +511,7 @@ class RLM:
         self,
         prompt: str,
         system: str | None = None,
+        options: StreamOptions | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream a simple completion (no tool use).
 
@@ -503,9 +522,13 @@ class RLM:
         Args:
             prompt: The user's prompt/question
             system: Optional system message for context
+            options: Optional streaming options (cost budget, timeout)
 
         Yields:
             str: Content chunks as they arrive
+
+        Raises:
+            CostBudgetExhausted: If estimated cost exceeds budget before starting
 
         Example:
             ```python
@@ -513,13 +536,48 @@ class RLM:
                 print(chunk, end="", flush=True)
             ```
         """
+        from rlm.core.pricing import estimate_cost
+
+        options = options or StreamOptions()
         messages: list[Message] = []
         if system:
             messages.append(Message(role="system", content=system))
         messages.append(Message(role="user", content=prompt))
 
-        if self.verbose:
-            logger.info("Starting stream", prompt_length=len(prompt))
+        # Estimate input tokens (rough: ~4 chars per token)
+        total_chars = sum(len(m.content) for m in messages)
+        estimated_input_tokens = total_chars // 4
 
+        # Check cost budget before starting (input tokens only)
+        if options.cost_budget_usd is not None:
+            input_cost = estimate_cost(self.backend.model, estimated_input_tokens, 0)
+            if input_cost is not None and input_cost >= options.cost_budget_usd:
+                raise CostBudgetExhausted(
+                    cost_used=input_cost,
+                    budget=options.cost_budget_usd,
+                )
+
+        if self.verbose:
+            logger.info(
+                "Starting stream",
+                prompt_length=len(prompt),
+                estimated_input_tokens=estimated_input_tokens,
+            )
+
+        output_chars = 0
         async for chunk in self.backend.stream(messages):
+            output_chars += len(chunk)
             yield chunk
+
+        # Log final cost estimate
+        estimated_output_tokens = output_chars // 4
+        final_cost = estimate_cost(
+            self.backend.model, estimated_input_tokens, estimated_output_tokens
+        )
+        if self.verbose:
+            logger.info(
+                "Stream completed",
+                estimated_input_tokens=estimated_input_tokens,
+                estimated_output_tokens=estimated_output_tokens,
+                estimated_cost_usd=final_cost,
+            )

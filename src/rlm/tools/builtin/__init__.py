@@ -11,15 +11,55 @@ if TYPE_CHECKING:
     from rlm.repl.base import BaseREPL
 
 
-def get_builtin_tools(repl: BaseREPL) -> list[Tool]:
+# Module-level allowed paths (set by get_builtin_tools)
+_allowed_paths: list[Path] = []
+
+
+def _validate_path(path: str, allowed_paths: list[Path]) -> tuple[Path | None, str | None]:
+    """Validate that a path is within allowed directories.
+
+    Args:
+        path: Path string to validate
+        allowed_paths: List of allowed base paths. If empty, uses current directory.
+
+    Returns:
+        Tuple of (resolved_path, error_message). If valid, error is None.
+    """
+    try:
+        resolved = Path(path).resolve()
+    except (OSError, ValueError) as e:
+        return None, f"Invalid path: {e}"
+
+    # Default to current directory if no allowed paths configured
+    bases = allowed_paths if allowed_paths else [Path.cwd()]
+
+    for base in bases:
+        try:
+            base_resolved = base.resolve()
+            # Check if resolved path is under base path
+            resolved.relative_to(base_resolved)
+            return resolved, None
+        except ValueError:
+            continue
+
+    # Path not under any allowed base
+    return None, f"Access denied: path '{path}' is outside allowed directories"
+
+
+def get_builtin_tools(repl: BaseREPL, allowed_paths: list[Path] | None = None) -> list[Tool]:
     """Get builtin tools with the given REPL instance.
 
     Args:
         repl: REPL instance for code execution
+        allowed_paths: List of allowed base paths for file operations.
+                       If None or empty, defaults to current working directory.
 
     Returns:
         List of builtin tools
     """
+    global _allowed_paths
+    _allowed_paths = allowed_paths or []
+
     return [
         _create_execute_code_tool(repl),
         _create_file_read_tool(),
@@ -98,7 +138,11 @@ def _create_file_read_tool() -> Tool:
         Returns:
             Dictionary with file content and metadata
         """
-        file_path = Path(path).resolve()
+        file_path, error = _validate_path(path, _allowed_paths)
+        if error:
+            return {"error": error, "content": None}
+
+        assert file_path is not None  # For type checker
 
         if not file_path.exists():
             return {"error": f"File not found: {path}", "content": None}
@@ -185,7 +229,11 @@ def _create_list_files_tool() -> Tool:
         Returns:
             Dictionary with list of files and metadata
         """
-        dir_path = Path(path).resolve()
+        dir_path, error = _validate_path(path, _allowed_paths)
+        if error:
+            return {"error": error, "files": []}
+
+        assert dir_path is not None  # For type checker
 
         if not dir_path.exists():
             return {"error": f"Path not found: {path}", "files": []}
@@ -264,13 +312,3 @@ def _create_list_files_tool() -> Tool:
         },
         handler=list_files,
     )
-
-
-def register(registry: Any) -> None:
-    """Entry point for tool discovery.
-
-    This function is called by the plugin system to register builtin tools.
-    """
-    # This is a placeholder - actual registration happens in orchestrator
-    # because we need the REPL instance
-    pass

@@ -14,7 +14,7 @@ from rlm.core.types import (
 from rlm.tools.base import Tool
 from rlm.tools.registry import ToolRegistry
 
-__version__ = "0.1.0"
+__version__ = "2.0.0"
 
 __all__ = [
     # Main class

@@ -195,6 +195,21 @@ class RLMResult:
 
 
 @dataclass
+class StreamOptions:
+    """Options for streaming completion requests."""
+
+    cost_budget_usd: float | None = None  # Maximum API cost in USD
+    timeout_seconds: int = 120
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "cost_budget_usd": self.cost_budget_usd,
+            "timeout_seconds": self.timeout_seconds,
+        }
+
+
+@dataclass
 class CompletionOptions:
     """Options for a completion request."""
 
