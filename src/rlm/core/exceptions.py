@@ -377,6 +377,168 @@ class BackendAuthError(BackendError):
         self.provider = provider
 
 
+# Parallel Execution Errors
+
+
+class ParallelExecutionError(RLMError):
+    """Raised when parallel tool execution encounters errors.
+
+    Attributes:
+        errors: List of (tool_name, error) tuples for failed executions
+        succeeded: Number of tools that succeeded
+    """
+
+    def __init__(self, errors: list[tuple[str, str]], succeeded: int = 0):
+        error_summary = "; ".join(f"{name}: {err[:50]}" for name, err in errors[:3])
+        super().__init__(
+            f"Parallel execution failed ({len(errors)} errors, {succeeded} succeeded): {error_summary}",
+            error_count=len(errors),
+            succeeded=succeeded,
+        )
+        self.errors = errors
+        self.succeeded = succeeded
+
+
+# Structured Output Errors
+
+
+class StructuredOutputError(RLMError):
+    """Raised when structured output parsing fails.
+
+    Attributes:
+        content: The raw content that failed to parse
+        schema: The expected JSON schema
+    """
+
+    def __init__(self, content: str, schema: dict[str, Any] | None = None):
+        super().__init__(
+            f"Failed to parse structured output: {content[:100]}",
+            content_length=len(content),
+        )
+        self.content = content
+        self.schema = schema
+
+
+# Sub-LLM Orchestration Errors
+
+
+class SubCallBudgetExhausted(RLMError):
+    """Raised when the sub-call budget is exhausted.
+
+    Attributes:
+        calls_made: Number of sub-calls made this turn
+        max_per_turn: Maximum allowed per turn
+    """
+
+    def __init__(self, calls_made: int, max_per_turn: int):
+        super().__init__(
+            f"Sub-call budget exhausted: {calls_made}/{max_per_turn} calls this turn",
+            calls_made=calls_made,
+            max_per_turn=max_per_turn,
+        )
+        self.calls_made = calls_made
+        self.max_per_turn = max_per_turn
+
+
+class SubCallDepthExceeded(RLMError):
+    """Raised when a sub-call would exceed the maximum depth.
+
+    Attributes:
+        current_depth: Current recursion depth
+        max_depth: Maximum allowed depth
+    """
+
+    def __init__(self, current_depth: int, max_depth: int):
+        super().__init__(
+            f"Sub-call depth exceeded: {current_depth}/{max_depth}",
+            current_depth=current_depth,
+            max_depth=max_depth,
+        )
+        self.current_depth = current_depth
+        self.max_depth = max_depth
+
+
+class SubCallCostExceeded(RLMError):
+    """Raised when sub-call session cost exceeds the limit.
+
+    Attributes:
+        session_cost: Total cost accumulated by sub-calls
+        max_cost: Maximum allowed session cost
+    """
+
+    def __init__(self, session_cost: float, max_cost: float):
+        super().__init__(
+            f"Sub-call session cost exceeded: ${session_cost:.4f}/${max_cost:.4f}",
+            session_cost=session_cost,
+            max_cost=max_cost,
+        )
+        self.session_cost = session_cost
+        self.max_cost = max_cost
+
+
+# Agent Errors
+
+
+class AgentError(RLMError):
+    """Base exception for agent-related errors."""
+
+    pass
+
+
+class AgentIterationLimitExceeded(AgentError):
+    """Raised when the agent iteration limit is exceeded.
+
+    Attributes:
+        iterations: Number of iterations completed
+        max_iterations: Maximum allowed iterations
+    """
+
+    def __init__(self, iterations: int, max_iterations: int):
+        super().__init__(
+            f"Agent iteration limit exceeded: {iterations}/{max_iterations}",
+            iterations=iterations,
+            max_iterations=max_iterations,
+        )
+        self.iterations = iterations
+        self.max_iterations = max_iterations
+
+
+class AgentCostLimitExceeded(AgentError):
+    """Raised when the agent cost limit is exceeded.
+
+    Attributes:
+        total_cost: Total cost spent
+        cost_limit: Maximum allowed cost
+    """
+
+    def __init__(self, total_cost: float, cost_limit: float):
+        super().__init__(
+            f"Agent cost limit exceeded: ${total_cost:.4f}/${cost_limit:.4f}",
+            total_cost=total_cost,
+            cost_limit=cost_limit,
+        )
+        self.total_cost = total_cost
+        self.cost_limit = cost_limit
+
+
+class AgentCancelled(AgentError):
+    """Raised when an agent run is cancelled.
+
+    Attributes:
+        run_id: The agent run ID
+        iterations_completed: How many iterations completed before cancellation
+    """
+
+    def __init__(self, run_id: str, iterations_completed: int = 0):
+        super().__init__(
+            f"Agent run cancelled: {run_id} after {iterations_completed} iterations",
+            run_id=run_id,
+            iterations_completed=iterations_completed,
+        )
+        self.run_id = run_id
+        self.iterations_completed = iterations_completed
+
+
 # Configuration Errors
 
 

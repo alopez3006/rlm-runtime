@@ -14,6 +14,9 @@ Tools provided:
 - clear_repl_context: Clear the REPL context
 - list_sessions: List active REPL sessions
 - destroy_session: Destroy a REPL session
+- rlm_agent_run: Start an autonomous agent task
+- rlm_agent_status: Check agent run status
+- rlm_agent_cancel: Cancel a running agent
 """
 
 from __future__ import annotations
@@ -132,12 +135,82 @@ class SessionManager:
             del self._sessions[sid]
 
 
+@dataclass
+class AgentRun:
+    """A running or completed agent task."""
+
+    run_id: str
+    task: str
+    future: asyncio.Task[Any]
+    started_at: float = field(default_factory=time.time)
+    result: Any = None  # AgentResult when complete
+    error: str | None = None
+
+
+class AgentManager:
+    """Manages autonomous agent runs."""
+
+    def __init__(self) -> None:
+        self._runs: dict[str, AgentRun] = {}
+
+    def start(self, run_id: str, task: str, coro: Any) -> AgentRun:
+        """Start an agent run as an async task."""
+        loop = asyncio.get_event_loop()
+        future = loop.create_task(coro)
+        run = AgentRun(run_id=run_id, task=task, future=future)
+
+        # Add callback to capture result/error
+        def _on_done(fut: asyncio.Task[Any]) -> None:
+            try:
+                run.result = fut.result()
+            except Exception as e:
+                run.error = str(e)
+
+        future.add_done_callback(_on_done)
+        self._runs[run_id] = run
+        return run
+
+    def get(self, run_id: str) -> AgentRun | None:
+        """Get an agent run by ID."""
+        return self._runs.get(run_id)
+
+    def cancel(self, run_id: str) -> bool:
+        """Cancel a running agent. Returns True if found."""
+        run = self._runs.get(run_id)
+        if run is None:
+            return False
+        if not run.future.done():
+            run.future.cancel()
+        return True
+
+    def list_runs(self) -> list[dict[str, Any]]:
+        """List all agent runs with status."""
+        results = []
+        for run in self._runs.values():
+            status = "running"
+            if run.future.done():
+                status = "completed" if run.error is None else "error"
+            elif run.future.cancelled():
+                status = "cancelled"
+            results.append(
+                {
+                    "run_id": run.run_id,
+                    "task": run.task[:100],
+                    "status": status,
+                    "started_at": run.started_at,
+                    "elapsed_seconds": int(time.time() - run.started_at),
+                }
+            )
+        return results
+
+
 def create_server() -> Server:
     """Create and configure the MCP server with code sandbox tools."""
     server = Server("rlm-runtime")
 
     # Session manager for multi-session support
     sessions = SessionManager()
+    agents = AgentManager()
 
     @server.list_tools()  # type: ignore[no-untyped-call,untyped-decorator]
     async def list_tools() -> list[Tool]:
@@ -264,6 +337,71 @@ def create_server() -> Server:
                     "required": ["session_id"],
                 },
             ),
+            Tool(
+                name="rlm_agent_run",
+                description=(
+                    "Start an autonomous agent that iteratively solves a task. "
+                    "The agent loops: observe -> think -> act -> terminate. "
+                    "Uses REPL for code execution, Snipara for context, and "
+                    "sub-LLM calls for delegation. Returns a run_id to check status."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "task": {
+                            "type": "string",
+                            "description": "The task for the agent to solve",
+                        },
+                        "max_iterations": {
+                            "type": "integer",
+                            "description": "Maximum iterations (default: 10, max: 50)",
+                            "default": 10,
+                        },
+                        "token_budget": {
+                            "type": "integer",
+                            "description": "Token budget (default: 50000)",
+                            "default": 50000,
+                        },
+                        "cost_limit": {
+                            "type": "number",
+                            "description": "Cost limit in USD (default: 2.0, max: 10.0)",
+                            "default": 2.0,
+                        },
+                    },
+                    "required": ["task"],
+                },
+            ),
+            Tool(
+                name="rlm_agent_status",
+                description=(
+                    "Check the status of an autonomous agent run. "
+                    "Returns running/completed/error status and the result if done."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "run_id": {
+                            "type": "string",
+                            "description": "The agent run ID from rlm_agent_run",
+                        },
+                    },
+                    "required": ["run_id"],
+                },
+            ),
+            Tool(
+                name="rlm_agent_cancel",
+                description="Cancel a running autonomous agent.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "run_id": {
+                            "type": "string",
+                            "description": "The agent run ID to cancel",
+                        },
+                    },
+                    "required": ["run_id"],
+                },
+            ),
         ]
 
     @server.call_tool()  # type: ignore[untyped-decorator]
@@ -292,6 +430,15 @@ def create_server() -> Server:
 
         elif name == "destroy_session":
             return await _destroy_session(sessions, arguments)
+
+        elif name == "rlm_agent_run":
+            return await _agent_run(agents, sessions, arguments)
+
+        elif name == "rlm_agent_status":
+            return await _agent_status(agents, arguments)
+
+        elif name == "rlm_agent_cancel":
+            return await _agent_cancel(agents, arguments)
 
         else:
             return CallToolResult(
@@ -431,6 +578,143 @@ async def _destroy_session(sessions: SessionManager, arguments: dict[str, Any]) 
     else:
         return CallToolResult(
             content=[TextContent(type="text", text=f"Session '{session_id}' not found")],
+            isError=True,
+        )
+
+
+async def _agent_run(
+    agents: AgentManager, sessions: SessionManager, arguments: dict[str, Any]
+) -> CallToolResult:
+    """Start an autonomous agent run."""
+    task = arguments.get("task", "")
+    if not task.strip():
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: No task provided")],
+            isError=True,
+        )
+
+    try:
+        from uuid import uuid4
+
+        from rlm.agent.config import AgentConfig
+        from rlm.agent.runner import AgentRunner
+        from rlm.core.config import load_config
+        from rlm.core.orchestrator import RLM
+
+        config = load_config()
+        rlm = RLM(config=config)
+
+        agent_config = AgentConfig(
+            max_iterations=arguments.get("max_iterations", 10),
+            token_budget=arguments.get("token_budget", 50000),
+            cost_limit=arguments.get("cost_limit", 2.0),
+        )
+
+        runner = AgentRunner(rlm, agent_config)
+        run_id = str(uuid4())[:8]
+
+        agents.start(run_id, task, runner.run(task))
+
+        return CallToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "run_id": run_id,
+                            "status": "running",
+                            "task": task[:200],
+                            "config": {
+                                "max_iterations": agent_config.max_iterations,
+                                "token_budget": agent_config.token_budget,
+                                "cost_limit": agent_config.cost_limit,
+                            },
+                        }
+                    ),
+                )
+            ],
+        )
+
+    except ImportError as e:
+        return CallToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text=f"Error: Agent dependencies not available: {e}",
+                )
+            ],
+            isError=True,
+        )
+    except Exception as e:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Error starting agent: {e}")],
+            isError=True,
+        )
+
+
+async def _agent_status(agents: AgentManager, arguments: dict[str, Any]) -> CallToolResult:
+    """Check agent run status."""
+    run_id = arguments.get("run_id", "")
+    if not run_id:
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: No run_id provided")],
+            isError=True,
+        )
+
+    run = agents.get(run_id)
+    if run is None:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Error: Run '{run_id}' not found")],
+            isError=True,
+        )
+
+    if run.future.done():
+        if run.error:
+            result_data = {
+                "run_id": run_id,
+                "status": "error",
+                "error": run.error,
+                "elapsed_seconds": int(time.time() - run.started_at),
+            }
+        else:
+            result_obj = run.result
+            result_data = {
+                "run_id": run_id,
+                "status": "completed",
+                "result": result_obj.to_dict()
+                if hasattr(result_obj, "to_dict")
+                else str(result_obj),
+                "elapsed_seconds": int(time.time() - run.started_at),
+            }
+    else:
+        result_data = {
+            "run_id": run_id,
+            "status": "running",
+            "task": run.task[:200],
+            "elapsed_seconds": int(time.time() - run.started_at),
+        }
+
+    return CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(result_data, indent=2))],
+    )
+
+
+async def _agent_cancel(agents: AgentManager, arguments: dict[str, Any]) -> CallToolResult:
+    """Cancel a running agent."""
+    run_id = arguments.get("run_id", "")
+    if not run_id:
+        return CallToolResult(
+            content=[TextContent(type="text", text="Error: No run_id provided")],
+            isError=True,
+        )
+
+    if agents.cancel(run_id):
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Agent run '{run_id}' cancelled")],
+        )
+    else:
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Error: Run '{run_id}' not found")],
             isError=True,
         )
 

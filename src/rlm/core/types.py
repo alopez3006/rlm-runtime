@@ -34,13 +34,37 @@ class SearchMode(str, Enum):
 
 @dataclass
 class Message:
-    """A message in the conversation."""
+    """A message in the conversation.
+
+    Content can be a plain string or a list of content blocks for multi-modal
+    input (images, audio). List format follows the OpenAI content block spec:
+
+        [
+            {"type": "text", "text": "What's in this image?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},
+        ]
+    """
 
     role: str  # "user", "assistant", "system", "tool"
-    content: str
+    content: str | list[dict[str, Any]]
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_call_id: str | None = None
     name: str | None = None  # For tool messages
+
+    @property
+    def text_content(self) -> str:
+        """Extract text content regardless of format.
+
+        Returns the content as a string. If content is a list of blocks,
+        concatenates all text blocks.
+        """
+        if isinstance(self.content, str):
+            return self.content
+        return " ".join(
+            block.get("text", "")
+            for block in self.content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -135,10 +159,11 @@ class TrajectoryEvent:
     error: str | None = None
     timestamp: datetime = field(default_factory=datetime.utcnow)
     estimated_cost_usd: float | None = None  # Estimated API cost for this event
+    sub_call_type: str | None = None  # "sub_complete" or "batch_complete" for sub-LLM calls
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
-        return {
+        result = {
             "trajectory_id": str(self.trajectory_id),
             "call_id": str(self.call_id),
             "parent_call_id": str(self.parent_call_id) if self.parent_call_id else None,
@@ -155,6 +180,9 @@ class TrajectoryEvent:
             "timestamp": self.timestamp.isoformat(),
             "estimated_cost_usd": self.estimated_cost_usd,
         }
+        if self.sub_call_type:
+            result["sub_call_type"] = self.sub_call_type
+        return result
 
 
 @dataclass
@@ -222,6 +250,9 @@ class CompletionOptions:
     temperature: float | None = None
     stop_sequences: list[str] | None = None
     cost_budget_usd: float | None = None  # Maximum API cost in USD
+    response_format: dict[str, Any] | None = None  # JSON schema for structured outputs
+    parallel_tools: bool = False  # Execute tool calls concurrently
+    max_parallel: int = 5  # Maximum concurrent tool executions
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -235,4 +266,7 @@ class CompletionOptions:
             "temperature": self.temperature,
             "stop_sequences": self.stop_sequences,
             "cost_budget_usd": self.cost_budget_usd,
+            "response_format": self.response_format,
+            "parallel_tools": self.parallel_tools,
+            "max_parallel": self.max_parallel,
         }

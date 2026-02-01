@@ -420,3 +420,172 @@ class TestDockerREPLResourceLimits:
 
         call_kwargs = mock_client.containers.run.call_args.kwargs
         assert call_kwargs["remove"] is True
+
+
+class TestDockerREPLParseMetrics:
+    """Tests for resource metrics parsing."""
+
+    @patch("rlm.repl.docker.DOCKER_AVAILABLE", True)
+    @patch("rlm.repl.docker.docker")
+    def test_parse_valid_metrics(self, mock_docker):
+        """Should parse valid metrics trailer."""
+        from rlm.repl.docker import DockerREPL
+
+        repl = DockerREPL()
+        output = "hello world\n__RLM_METRICS__:42:1048576\n"
+
+        cleaned, cpu_ms, mem_bytes = repl._parse_metrics(output)
+
+        assert cleaned == "hello world\n"
+        assert cpu_ms == 42
+        assert mem_bytes == 1048576
+
+    @patch("rlm.repl.docker.DOCKER_AVAILABLE", True)
+    @patch("rlm.repl.docker.docker")
+    def test_parse_metrics_no_user_output(self, mock_docker):
+        """Should handle metrics with no user output."""
+        from rlm.repl.docker import DockerREPL
+
+        repl = DockerREPL()
+        output = "__RLM_METRICS__:10:524288\n"
+
+        cleaned, cpu_ms, mem_bytes = repl._parse_metrics(output)
+
+        assert cleaned == ""
+        assert cpu_ms == 10
+        assert mem_bytes == 524288
+
+    @patch("rlm.repl.docker.DOCKER_AVAILABLE", True)
+    @patch("rlm.repl.docker.docker")
+    def test_parse_metrics_missing(self, mock_docker):
+        """Should return None when no metrics trailer present."""
+        from rlm.repl.docker import DockerREPL
+
+        repl = DockerREPL()
+        output = "hello world\n"
+
+        cleaned, cpu_ms, mem_bytes = repl._parse_metrics(output)
+
+        assert cleaned == "hello world\n"
+        assert cpu_ms is None
+        assert mem_bytes is None
+
+    @patch("rlm.repl.docker.DOCKER_AVAILABLE", True)
+    @patch("rlm.repl.docker.docker")
+    def test_parse_metrics_malformed(self, mock_docker):
+        """Should return None for malformed metrics."""
+        from rlm.repl.docker import DockerREPL
+
+        repl = DockerREPL()
+        output = "hello\n__RLM_METRICS__:not_a_number:also_bad\n"
+
+        cleaned, cpu_ms, mem_bytes = repl._parse_metrics(output)
+
+        assert cleaned == "hello\n__RLM_METRICS__:not_a_number:also_bad\n"
+        assert cpu_ms is None
+        assert mem_bytes is None
+
+    @patch("rlm.repl.docker.DOCKER_AVAILABLE", True)
+    @patch("rlm.repl.docker.docker")
+    def test_parse_metrics_empty_output(self, mock_docker):
+        """Should handle empty output."""
+        from rlm.repl.docker import DockerREPL
+
+        repl = DockerREPL()
+
+        cleaned, cpu_ms, mem_bytes = repl._parse_metrics("")
+
+        assert cleaned == ""
+        assert cpu_ms is None
+        assert mem_bytes is None
+
+    @patch("rlm.repl.docker.DOCKER_AVAILABLE", True)
+    @patch("rlm.repl.docker.docker")
+    def test_parse_metrics_multiline_output(self, mock_docker):
+        """Should preserve multiline user output."""
+        from rlm.repl.docker import DockerREPL
+
+        repl = DockerREPL()
+        output = "line1\nline2\nline3\n__RLM_METRICS__:100:2097152\n"
+
+        cleaned, cpu_ms, mem_bytes = repl._parse_metrics(output)
+
+        assert cleaned == "line1\nline2\nline3\n"
+        assert cpu_ms == 100
+        assert mem_bytes == 2097152
+
+    @patch("rlm.repl.docker.DOCKER_AVAILABLE", True)
+    @patch("rlm.repl.docker.docker")
+    def test_parse_metrics_incomplete_trailer(self, mock_docker):
+        """Should return None for incomplete trailer."""
+        from rlm.repl.docker import DockerREPL
+
+        repl = DockerREPL()
+        output = "hello\n__RLM_METRICS__:42\n"
+
+        cleaned, cpu_ms, mem_bytes = repl._parse_metrics(output)
+
+        assert cleaned == "hello\n__RLM_METRICS__:42\n"
+        assert cpu_ms is None
+        assert mem_bytes is None
+
+
+class TestDockerREPLResourceReporting:
+    """Tests for resource reporting in execute()."""
+
+    @pytest.mark.asyncio
+    @patch("rlm.repl.docker.DOCKER_AVAILABLE", True)
+    @patch("rlm.repl.docker.docker")
+    async def test_execute_populates_resource_metrics(self, mock_docker):
+        """Should populate cpu_time_ms and memory_peak_bytes from container output."""
+        from rlm.repl.docker import DockerREPL
+
+        mock_client = MagicMock()
+        mock_docker.from_env.return_value = mock_client
+        mock_client.images.get.return_value = MagicMock()
+        mock_client.containers.run.return_value = b"hello\n__RLM_METRICS__:25:4194304\n"
+
+        repl = DockerREPL()
+        result = await repl.execute("print('hello')")
+
+        assert result.output == "hello\n"
+        assert result.error is None
+        assert result.cpu_time_ms == 25
+        assert result.memory_peak_bytes == 4194304
+
+    @pytest.mark.asyncio
+    @patch("rlm.repl.docker.DOCKER_AVAILABLE", True)
+    @patch("rlm.repl.docker.docker")
+    async def test_execute_metrics_stripped_from_output(self, mock_docker):
+        """Should strip metrics trailer from user-visible output."""
+        from rlm.repl.docker import DockerREPL
+
+        mock_client = MagicMock()
+        mock_docker.from_env.return_value = mock_client
+        mock_client.images.get.return_value = MagicMock()
+        mock_client.containers.run.return_value = b"result = 42\n__RLM_METRICS__:5:1024\n"
+
+        repl = DockerREPL()
+        result = await repl.execute("result = 42")
+
+        assert "__RLM_METRICS__" not in result.output
+        assert result.output == "result = 42\n"
+
+    @pytest.mark.asyncio
+    @patch("rlm.repl.docker.DOCKER_AVAILABLE", True)
+    @patch("rlm.repl.docker.docker")
+    async def test_execute_no_metrics_returns_none(self, mock_docker):
+        """Should return None for metrics when trailer is absent."""
+        from rlm.repl.docker import DockerREPL
+
+        mock_client = MagicMock()
+        mock_docker.from_env.return_value = mock_client
+        mock_client.images.get.return_value = MagicMock()
+        mock_client.containers.run.return_value = b"output only\n"
+
+        repl = DockerREPL()
+        result = await repl.execute("print('output only')")
+
+        assert result.output == "output only\n"
+        assert result.cpu_time_ms is None
+        assert result.memory_peak_bytes is None

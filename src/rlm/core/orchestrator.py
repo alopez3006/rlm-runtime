@@ -196,6 +196,9 @@ class RLM:
             logger.debug("Snipara not configured, skipping tool registration")
             return
 
+        # Memory tools that require memory_enabled flag
+        memory_tool_names = {"rlm_remember", "rlm_recall", "rlm_memories", "rlm_forget"}
+
         try:
             from snipara_mcp.rlm_tools import get_snipara_tools
 
@@ -203,9 +206,18 @@ class RLM:
                 api_key=self.config.snipara_api_key,
                 project_slug=self.config.snipara_project_slug,
             )
+            registered = 0
             for tool in tools:
+                # Skip memory tools unless memory_enabled
+                if tool.name in memory_tool_names and not self.config.memory_enabled:
+                    continue
                 self.tool_registry.register(tool)
-            logger.info("Snipara tools registered", count=len(tools))
+                registered += 1
+            logger.info(
+                "Snipara tools registered",
+                count=registered,
+                memory_enabled=self.config.memory_enabled,
+            )
         except ImportError:
             logger.debug(
                 "snipara-mcp not installed, skipping Snipara tools. "
@@ -266,6 +278,26 @@ class RLM:
                 prompt_length=len(prompt),
             )
 
+        # Create sub-LLM tools if enabled
+        extra_tools: list[Tool] | None = None
+        if self.config.sub_calls_enabled:
+            from rlm.tools.sub_llm import SubCallLimits, SubLLMContext, get_sub_llm_tools
+
+            sub_context = SubLLMContext(
+                limits=SubCallLimits(
+                    enabled=self.config.sub_calls_enabled,
+                    max_per_turn=self.config.sub_calls_max_per_turn,
+                    budget_inheritance=self.config.sub_calls_budget_inheritance,
+                    max_cost_per_session=self.config.sub_calls_max_cost_per_session,
+                )
+            )
+            extra_tools = get_sub_llm_tools(
+                rlm=self,
+                context=sub_context,
+                parent_options=options,
+                parent_tokens_used=0,
+            )
+
         # Execute recursive completion with timeout enforcement
         try:
             response, events = await asyncio.wait_for(
@@ -276,6 +308,7 @@ class RLM:
                     depth=0,
                     options=options,
                     events=events,
+                    extra_tools=extra_tools,
                 ),
                 timeout=float(options.timeout_seconds),
             )
@@ -355,6 +388,7 @@ class RLM:
         depth: int,
         options: CompletionOptions,
         events: list[TrajectoryEvent],
+        extra_tools: list[Tool] | None = None,
     ) -> tuple[str, list[TrajectoryEvent]]:
         """Internal recursive completion loop."""
         call_id = uuid4()
@@ -378,12 +412,17 @@ class RLM:
             if current_cost >= options.cost_budget_usd:
                 raise CostBudgetExhausted(cost_used=current_cost, budget=options.cost_budget_usd)
 
-        # Get available tools
+        # Get available tools (registry + any extra tools for this completion)
         tools = self.tool_registry.get_all()
+        if extra_tools:
+            tools = tools + extra_tools
 
         # Call backend
         start_time = time.time()
-        response = await self.backend.complete(messages, tools=tools)
+        backend_kwargs: dict = {}
+        if options.response_format is not None:
+            backend_kwargs["response_format"] = options.response_format
+        response = await self.backend.complete(messages, tools=tools, **backend_kwargs)
         duration_ms = int((time.time() - start_time) * 1000)
 
         # Calculate estimated cost for this call
@@ -399,7 +438,7 @@ class RLM:
             call_id=call_id,
             parent_call_id=parent_call_id,
             depth=depth,
-            prompt=messages[-1].content,
+            prompt=messages[-1].text_content,
             response=response.content,
             tool_calls=response.tool_calls,
             input_tokens=response.input_tokens,
@@ -412,29 +451,70 @@ class RLM:
         if response.tool_calls:
             tool_results: list[ToolResult] = []
 
-            for tool_call in response.tool_calls:
-                # Check tool budget
-                total_tool_calls = sum(len(e.tool_calls) for e in events) + len(tool_results)
-                if total_tool_calls >= options.tool_budget:
-                    tool_results.append(
-                        ToolResult(
-                            tool_call_id=tool_call.id,
-                            content="Error: Tool budget exceeded. No more tool calls will be executed.",
-                            is_error=True,
+            # Check how many tool calls we can still make
+            current_tool_count = sum(len(e.tool_calls) for e in events)
+            remaining_budget = options.tool_budget - current_tool_count
+
+            # Filter tool calls to fit within budget
+            allowed_calls = response.tool_calls[:remaining_budget]
+            budget_exceeded_calls = response.tool_calls[remaining_budget:]
+
+            if options.parallel_tools and len(allowed_calls) > 1:
+                # Parallel execution with semaphore
+                semaphore = asyncio.Semaphore(options.max_parallel)
+
+                async def _execute_with_semaphore(tc: ToolCall) -> ToolResult:
+                    async with semaphore:
+                        return await self._execute_tool(tc, extra_tools=extra_tools)
+
+                results = await asyncio.gather(
+                    *[_execute_with_semaphore(tc) for tc in allowed_calls],
+                    return_exceptions=True,
+                )
+
+                for tc, result in zip(allowed_calls, results, strict=True):
+                    if isinstance(result, Exception):
+                        tool_results.append(
+                            ToolResult(
+                                tool_call_id=tc.id,
+                                content=f"Error: {result}",
+                                is_error=True,
+                            )
                         )
-                    )
-                    break  # Stop processing additional tool calls
+                    else:
+                        tool_results.append(result)
 
-                # Execute tool
-                result = await self._execute_tool(tool_call)
-                tool_results.append(result)
+                    if self.verbose:
+                        is_error = isinstance(result, Exception) or (
+                            isinstance(result, ToolResult) and result.is_error
+                        )
+                        logger.debug(
+                            "Tool executed (parallel)",
+                            tool=tc.name,
+                            is_error=is_error,
+                        )
+            else:
+                # Sequential execution (default)
+                for tool_call in allowed_calls:
+                    result = await self._execute_tool(tool_call, extra_tools=extra_tools)
+                    tool_results.append(result)
 
-                if self.verbose:
-                    logger.debug(
-                        "Tool executed",
-                        tool=tool_call.name,
-                        is_error=result.is_error,
+                    if self.verbose:
+                        logger.debug(
+                            "Tool executed",
+                            tool=tool_call.name,
+                            is_error=result.is_error,
+                        )
+
+            # Add budget exceeded errors for remaining calls
+            for tc in budget_exceeded_calls:
+                tool_results.append(
+                    ToolResult(
+                        tool_call_id=tc.id,
+                        content="Error: Tool budget exceeded. No more tool calls will be executed.",
+                        is_error=True,
                     )
+                )
 
             event.tool_results = tool_results
             events.append(event)
@@ -466,18 +546,31 @@ class RLM:
                 depth=depth + 1,
                 options=options,
                 events=events,
+                extra_tools=extra_tools,
             )
 
         # No tool calls - we're done
         events.append(event)
         return response.content or "", events
 
-    async def _execute_tool(self, tool_call: ToolCall) -> ToolResult:
+    async def _execute_tool(
+        self,
+        tool_call: ToolCall,
+        extra_tools: list[Tool] | None = None,
+    ) -> ToolResult:
         """Execute a tool call."""
         try:
             tool = self.tool_registry.get(tool_call.name)
+            # Check extra_tools if not found in registry
+            if tool is None and extra_tools:
+                for et in extra_tools:
+                    if et.name == tool_call.name:
+                        tool = et
+                        break
             if tool is None:
                 available = [t.name for t in self.tool_registry.get_all()]
+                if extra_tools:
+                    available.extend(t.name for t in extra_tools)
                 error = ToolNotFoundError(tool_call.name, available)
                 return ToolResult(
                     tool_call_id=tool_call.id,

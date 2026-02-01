@@ -119,6 +119,9 @@ class DockerREPL(BaseREPL):
             # Pull image asynchronously
             await asyncio.to_thread(client.images.pull, self.image)
 
+    # Sentinel used to identify the metrics trailer line in container output
+    _METRICS_PREFIX = "__RLM_METRICS__:"
+
     def _create_script(self, code: str) -> str:
         """Create the Python script to run in the container."""
         context_json = json.dumps(self._context)
@@ -126,6 +129,7 @@ class DockerREPL(BaseREPL):
         return f"""
 import json
 import sys
+import resource as _resource
 
 # Inject context
 context = json.loads({context_json!r})
@@ -153,12 +157,63 @@ if output:
     print(output, end="")
 if result is not None:
     print(f"result = {{result!r}}")
+
+# Resource metrics trailer
+_usage = _resource.getrusage(_resource.RUSAGE_SELF)
+_cpu_ms = int((_usage.ru_utime + _usage.ru_stime) * 1000)
+_mem_bytes = _usage.ru_maxrss * 1024  # ru_maxrss is in KB on Linux
+print(f"__RLM_METRICS__:{{_cpu_ms}}:{{_mem_bytes}}")
 """
 
     def _indent_code(self, code: str, spaces: int = 4) -> str:
         """Indent code for inclusion in the script."""
         indent = " " * spaces
         return "\n".join(indent + line for line in code.splitlines())
+
+    def _parse_metrics(self, output: str) -> tuple[str, int | None, int | None]:
+        """Parse and strip the resource metrics trailer from container output.
+
+        Args:
+            output: Raw container output that may contain a metrics trailer line.
+
+        Returns:
+            Tuple of (cleaned_output, cpu_time_ms, memory_peak_bytes).
+            cpu_time_ms and memory_peak_bytes are None if the trailer is missing or malformed.
+        """
+        if not output:
+            return output, None, None
+
+        # The metrics trailer is always the last line
+        lines = output.split("\n")
+
+        # Find and strip the metrics line (last non-empty line)
+        last_line_idx = len(lines) - 1
+        while last_line_idx >= 0 and not lines[last_line_idx].strip():
+            last_line_idx -= 1
+
+        if last_line_idx < 0:
+            return output, None, None
+
+        last_line = lines[last_line_idx].strip()
+        if not last_line.startswith(self._METRICS_PREFIX):
+            return output, None, None
+
+        try:
+            parts = last_line[len(self._METRICS_PREFIX) :].split(":")
+            cpu_time_ms = int(parts[0])
+            memory_peak_bytes = int(parts[1])
+        except (IndexError, ValueError):
+            return output, None, None
+
+        # Remove the metrics line from output
+        cleaned_lines = lines[:last_line_idx] + lines[last_line_idx + 1 :]
+        cleaned_output = "\n".join(cleaned_lines)
+        # Strip trailing newlines that were added before the metrics line
+        cleaned_output = cleaned_output.rstrip("\n")
+        if cleaned_output:
+            cleaned_output += "\n"
+
+        return cleaned_output, cpu_time_ms, memory_peak_bytes
 
     async def execute(self, code: str, timeout: int | None = None) -> REPLResult:
         """Execute code in a Docker container.
@@ -214,6 +269,9 @@ if result is not None:
 
                 execution_time_ms = int((asyncio.get_event_loop().time() - start_time) * 1000)
                 output_str = output.decode("utf-8") if isinstance(output, bytes) else str(output)
+
+                # Parse resource metrics before truncating
+                output_str, cpu_time_ms, memory_peak_bytes = self._parse_metrics(output_str)
                 output_str, truncated = truncate_output(output_str)
 
                 return REPLResult(
@@ -221,6 +279,8 @@ if result is not None:
                     error=None,
                     execution_time_ms=execution_time_ms,
                     truncated=truncated,
+                    cpu_time_ms=cpu_time_ms,
+                    memory_peak_bytes=memory_peak_bytes,
                 )
 
             except ContainerError as e:

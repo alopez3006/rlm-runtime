@@ -1,14 +1,13 @@
-# Autonomous RLM Agent (Phase: Planned)
+# Autonomous RLM Agent (Phase 9) ✅
 
-## Overview
+## Status: Implemented
 
-The Autonomous RLM Agent implements the full Recursive Language Model loop from Alex Zhang's paper. The model explores documentation, writes and executes code, spawns sub-LLM calls, and terminates when it has enough information to answer -- all in a single `rlm.completion()` call.
+The Autonomous RLM Agent implements the full Recursive Language Model loop. The model explores documentation, writes and executes code, spawns sub-LLM calls, and terminates when it has enough information to answer.
 
 This is the capstone feature that combines all prior capabilities:
 - **REPL execution** (Phase 1) -- Run code in sandboxed environments
 - **Snipara context** (existing) -- Retrieve optimized documentation
-- **REPL Context Bridge** (Snipara Phase 13) -- Pre-packaged context for REPL
-- **Sub-LLM Orchestration** (prior phase) -- Recursive sub-calls with budget control
+- **Sub-LLM Orchestration** (Phase 8) -- Recursive sub-calls with budget control
 - **Cost tracking** (Phase 4) -- Full cost visibility across the agent loop
 
 ## The RLM Loop
@@ -18,7 +17,7 @@ This is the capstone feature that combines all prior capabilities:
 │  RLM Agent Loop                                                 │
 │                                                                  │
 │  1. OBSERVE                                                      │
-│     - Load project context (Snipara rlm_repl_context)           │
+│     - Load project context (Snipara rlm_context_query)          │
 │     - Scan documentation structure                               │
 │     - Review existing code                                       │
 │                                                                  │
@@ -38,229 +37,380 @@ This is the capstone feature that combines all prior capabilities:
 │     - Agent loop ends, result returned to user                   │
 │                                                                  │
 │  Loop: 1 → 2 → 3 → 2 → 3 → ... → 4                            │
-│  Max iterations: configurable (default: 10)                      │
+│  Max iterations: configurable (default: 10, hard limit: 50)     │
 └────────────────────────────────────────────────────────────────┘
 ```
 
+## Implementation
+
+### Source Files
+
+| File | Description |
+|------|-------------|
+| `src/rlm/agent/__init__.py` | Exports `AgentRunner`, `AgentConfig`, `AgentResult` |
+| `src/rlm/agent/config.py` | `AgentConfig` dataclass with hard safety limit clamping |
+| `src/rlm/agent/result.py` | `AgentResult` dataclass with `success` property |
+| `src/rlm/agent/runner.py` | Main `AgentRunner` class with `run()`, `cancel()`, `status` |
+| `src/rlm/agent/terminal.py` | `AgentState` + `FINAL`/`FINAL_VAR` tool definitions |
+| `src/rlm/agent/prompts.py` | System prompt and iteration prompt builder |
+| `src/rlm/agent/guardrails.py` | `check_iteration_allowed()` safety checks |
+| `src/rlm/mcp/server.py` | MCP tools: `rlm_agent_run`, `rlm_agent_status`, `rlm_agent_cancel` |
+| `src/rlm/cli/main.py` | `rlm agent` CLI command with Rich output |
+| `src/rlm/core/exceptions.py` | `AgentError`, `AgentIterationLimitExceeded`, `AgentCostLimitExceeded`, `AgentCancelled` |
+
+### Test Files
+
+| File | Tests | Coverage |
+|------|-------|---------|
+| `tests/unit/test_agent_runner.py` | 10 | Deterministic replay, budget enforcement, timeout, cancel, FINAL_VAR |
+| `tests/unit/test_agent_terminal.py` | 5 | FINAL/FINAL_VAR tool handlers, AgentState |
+| `tests/unit/test_agent_config.py` | 8 | Hard limit clamping, defaults |
+| `tests/unit/test_agent_guardrails.py` | 5 | `check_iteration_allowed()` at each limit |
+| `tests/unit/test_agent_prompts.py` | 8 | Prompt includes task, iteration, budget; warning on final |
+
 ## FINAL / FINAL_VAR Protocol
 
-The agent signals completion using special tool calls:
+The agent signals completion using registered **tool calls** (not string parsing):
 
 ### `FINAL(answer)`
 
 Returns a natural language answer. The agent has gathered enough context and is ready to synthesize.
 
 ```python
-# The LLM calls this when ready to answer:
-FINAL("The authentication system uses JWT tokens with RS256 signing. "
-      "Tokens are issued by /api/auth/login and refreshed via /api/auth/refresh. "
-      "The middleware in auth.py validates tokens on every request.")
+# The LLM calls this tool when ready to answer:
+FINAL(answer="The authentication system uses JWT tokens with RS256 signing. "
+             "Tokens are issued by /api/auth/login and refreshed via /api/auth/refresh.")
 ```
 
-### `FINAL_VAR(var_name)`
+**Implementation** ([terminal.py](../src/rlm/agent/terminal.py)):
+- Sets `AgentState.is_terminal = True`
+- Stores `terminal_value = answer`
+- Sets `terminal_type = "final"`
+- Returns confirmation string to the LLM
 
-Returns a computed value from the REPL context. Useful when the agent wrote code to analyze data and wants to return the result.
+### `FINAL_VAR(variable_name)`
+
+Returns a computed value from the REPL context. Useful when the agent wrote code to analyze data.
 
 ```python
 # The LLM executes code, then returns the computed result:
-execute_python("result = analyze_logs(context['files']['logs.md'])")
-FINAL_VAR("result")  # Returns the value of 'result' from REPL context
+execute_python(code="result = sum(range(100))")
+FINAL_VAR(variable_name="result")  # Returns 4950
 ```
 
-## Implementation Design
+**Implementation**:
+- Reads variable from `repl.get_context()`
+- Converts value to string via `str()`
+- Sets `terminal_type = "final_var"`
+- If variable not found: returns error, does NOT set terminal state (agent continues)
 
-### Agent Runner
+## AgentRunner
+
+### Core Loop
 
 ```python
-@dataclass
-class AgentConfig:
-    """Configuration for the autonomous agent loop."""
-    max_iterations: int = 10          # Maximum observe-think-act cycles
-    max_depth: int = 3                # Sub-LLM recursion depth
-    token_budget: int = 50000         # Total token budget
-    cost_limit: float = 2.0           # Dollar cap for entire agent run
-    timeout_seconds: int = 120        # Wall-clock timeout
-    auto_context: bool = True         # Auto-load Snipara context at start
-    context_budget: int = 8000        # Tokens for initial context load
-    trajectory_log: bool = True       # Log full trajectory for debugging
-
-
 class AgentRunner:
-    """Runs the autonomous RLM agent loop."""
-
-    def __init__(self, rlm: RLM, config: AgentConfig = None):
+    def __init__(self, rlm: RLM, config: AgentConfig | None = None):
         self.rlm = rlm
         self.config = config or AgentConfig()
-        self._iteration = 0
-        self._total_tokens = 0
-        self._total_cost = 0.0
 
     async def run(self, task: str) -> AgentResult:
-        """Execute the agent loop until FINAL or limit reached."""
+        # 1. Register FINAL/FINAL_VAR terminal tools
+        # 2. Optional: auto-load Snipara context for task
+        # 3. Loop:
+        #    a. Check cancellation flag
+        #    b. Check guardrails (iteration, cost, token limits)
+        #    c. Build iteration prompt with previous actions summary
+        #    d. Force FINAL instruction on last iteration
+        #    e. result = await rlm.completion(prompt, system, options)
+        #    f. Track tokens/cost, accumulate events
+        #    g. Record tool call summaries for next iteration context
+        #    h. if state.is_terminal: return AgentResult(success)
+        # 4. Return forced termination result
+        # 5. Finally: unregister terminal tools
 
-        # Phase 1: Initial context load (if Snipara configured)
-        if self.config.auto_context:
-            context = await self._load_initial_context(task)
+    def cancel(self) -> None:
+        """Set cancellation flag, checked at each iteration."""
 
-        # Phase 2: Agent loop
-        while self._iteration < self.config.max_iterations:
-            self._iteration += 1
-
-            result = await self.rlm.completion(
-                task,
-                tools=self._get_tools(),
-                max_tokens=self._remaining_budget(),
-            )
-
-            # Check for FINAL/FINAL_VAR in tool calls
-            terminal = self._check_terminal(result)
-            if terminal:
-                return AgentResult(
-                    answer=terminal.value,
-                    iterations=self._iteration,
-                    total_tokens=self._total_tokens,
-                    total_cost=self._total_cost,
-                    trajectory=self._trajectory,
-                )
-
-            self._total_tokens += result.usage.total_tokens
-            self._total_cost += result.cost
-
-        # Max iterations reached -- force termination
-        return AgentResult(
-            answer=result.response,  # Use last response
-            iterations=self._iteration,
-            forced_termination=True,
-            total_tokens=self._total_tokens,
-            total_cost=self._total_cost,
-            trajectory=self._trajectory,
-        )
+    @property
+    def status(self) -> dict:
+        """Current run_id, iteration, tokens, cost, terminal state."""
 ```
 
-### Tool Set
+### Key Design Decisions
 
-The agent has access to all standard tools plus terminal tools:
+1. **Each iteration = one `rlm.completion()` call**: Context carried forward via previous_actions summary
+2. **FINAL/FINAL_VAR are tools**: Registered in tool registry per agent run, cleaned up in `finally` block
+3. **Auto-context on first iteration**: If Snipara is configured and `auto_context=True`, `rlm_context_query` is called with the task to inject relevant documentation into the system prompt
+4. **Iteration budget slicing**: Each iteration gets `min(remaining, token_budget // max_iterations * 2)` tokens
+5. **Previous actions**: Last 5 actions summarized as context for next iteration (prevents context explosion)
 
-| Tool | Category | Purpose |
-|------|----------|---------|
-| `execute_python` | REPL | Run code in sandbox |
-| `get_repl_context` | REPL | Read persistent state |
-| `set_repl_context` | REPL | Write persistent state |
-| `context_query` | Snipara | Search documentation |
-| `repl_context` | Snipara | Load REPL-ready context with helpers |
-| `load_document` | Snipara | Read raw file content |
-| `orchestrate` | Snipara | Multi-round exploration |
-| `rlm_sub_complete` | Sub-LLM | Delegate sub-problems |
-| `rlm_batch_complete` | Sub-LLM | Parallel sub-queries |
-| **`FINAL`** | Terminal | Return natural language answer |
-| **`FINAL_VAR`** | Terminal | Return computed variable |
+## AgentConfig
+
+```python
+from rlm.agent.config import AgentConfig
+
+# Hard safety limits (non-configurable, clamped in __post_init__)
+ABSOLUTE_MAX_ITERATIONS = 50
+ABSOLUTE_MAX_COST = 10.0
+ABSOLUTE_MAX_TIMEOUT = 600
+ABSOLUTE_MAX_DEPTH = 5
+
+config = AgentConfig(
+    max_iterations=10,      # Clamped to 50
+    max_depth=3,            # Clamped to 5
+    token_budget=50000,
+    cost_limit=2.0,         # Clamped to $10
+    timeout_seconds=120,    # Clamped to 600
+    auto_context=True,      # Auto-load Snipara context on first iteration
+    context_budget=8000,    # Tokens for auto-context query
+    trajectory_log=True,    # Log full trajectory
+    tool_budget=50,         # Tool calls across all iterations
+)
+```
+
+**Clamping**: Values exceeding hard limits are silently clamped in `__post_init__`:
+```python
+config = AgentConfig(max_iterations=100)
+assert config.max_iterations == 50  # Clamped to ABSOLUTE_MAX_ITERATIONS
+```
+
+## AgentResult
+
+```python
+from rlm.agent.result import AgentResult
+
+result = await runner.run("What is 2+2?")
+
+result.answer           # "4" or "The answer is 4"
+result.answer_source    # "final", "final_var", "forced", or "error"
+result.iterations       # Number of iterations completed
+result.total_tokens     # Total tokens used
+result.total_cost       # Total cost in USD
+result.duration_ms      # Wall-clock time
+result.forced_termination  # True if limits were hit
+result.run_id           # Unique run identifier
+result.trajectory       # List of TrajectoryEvent
+result.iteration_summaries  # Per-iteration stats (tokens, cost, tool_calls)
+result.success          # True when answer_source in ("final", "final_var") and not forced
+result.to_dict()        # JSON-serializable dict
+```
+
+## Guardrails
+
+The `check_iteration_allowed()` function ([guardrails.py](../src/rlm/agent/guardrails.py)) is called before each iteration:
+
+```python
+def check_iteration_allowed(
+    iteration: int,
+    config: AgentConfig,
+    total_cost: float,
+    total_tokens: int,
+) -> tuple[bool, str | None]:
+    """Check if the next iteration should proceed.
+
+    Returns (allowed, reason) where reason is None if allowed.
+    """
+```
+
+**Checks**:
+1. `iteration >= config.max_iterations` → "Iteration limit reached"
+2. `total_cost >= config.cost_limit` → "Cost limit reached"
+3. `total_tokens >= config.token_budget` → "Token budget exhausted"
+
+### Graceful Degradation
+
+When limits are hit, the agent doesn't crash:
+
+| Scenario | Behavior |
+|----------|----------|
+| Budget exhausted | Loop exits, returns last action summary with `forced_termination=True` |
+| Iteration limit | Loop exits, returns last action summary with `forced_termination=True` |
+| Timeout | `asyncio.TimeoutError` caught, returns error result |
+| Cancellation | `_cancelled` flag checked each iteration, returns error result |
+| Final iteration | Prompt includes `**WARNING: This is your FINAL iteration. You MUST call FINAL...**` |
+
+## Prompts
 
 ### System Prompt
 
-The agent receives a structured system prompt that explains the loop:
+The `AGENT_SYSTEM_PROMPT` ([prompts.py](../src/rlm/agent/prompts.py)) instructs the LLM on:
+- Available tools (explore, analyze, delegate, terminate)
+- When to use FINAL vs FINAL_VAR
+- Budget awareness
+- Snipara tool names (rlm_context_query, rlm_remember)
+
+### Iteration Prompt
+
+`build_iteration_prompt()` constructs per-iteration context:
 
 ```python
-AGENT_SYSTEM_PROMPT = """You are an autonomous research agent. Your goal is to answer
-the user's question by exploring documentation and code.
-
-## Available Actions
-
-1. **Explore**: Use context_query, load_document, orchestrate to find information
-2. **Analyze**: Use execute_python to run analysis code on loaded context
-3. **Delegate**: Use rlm_sub_complete for focused sub-problems
-4. **Terminate**: Call FINAL("your answer") when you have enough information
-
-## Rules
-
-- Always explore before answering. Don't guess.
-- Use FINAL_VAR when you computed a result in code.
-- Keep sub-calls focused and budget-aware.
-- If stuck after 3 iterations, call FINAL with your best answer and note gaps.
-
-## Context
-
-Your REPL has a persistent `context` variable with project documentation.
-Use peek(), grep(), sections(), files() helpers to navigate it.
-"""
+prompt = build_iteration_prompt(
+    task="What is 2+2?",
+    iteration=2,                       # 0-based
+    max_iterations=10,
+    previous_actions=["Did step 1"],   # Last 5 actions included
+    remaining_budget=48000,
+)
 ```
 
-## Trajectory Logging
+Output includes:
+- Task description
+- Iteration counter: "Iteration 3/10"
+- Previous actions summary (last 5)
+- Remaining token budget
+- **WARNING on final iteration**: Forces FINAL call
 
-Every agent run produces a detailed trajectory log:
+## CLI Usage
 
-```json
+```bash
+# Basic agent run
+rlm agent "What is 2+2?"
+
+# With all options
+rlm agent "Explain the auth system" \
+    --model claude-sonnet-4-20250514 \
+    --backend litellm \
+    --env docker \
+    --max-iterations 20 \
+    --budget 50000 \
+    --cost-limit 5.0 \
+    --timeout 300 \
+    --auto-context \
+    --verbose
+
+# JSON output for scripting
+rlm agent "Count lines in main.py" --json
+
+# Disable auto-context
+rlm agent "Simple math" --no-auto-context
+```
+
+### CLI Output
+
+The CLI uses Rich for formatted output:
+
+**Standard output**:
+```
+╭─ Answer ─────────────────────────────────╮
+│ The answer is 4.                          │
+╰──────────────────────────────────────────╯
+
+     Agent Summary
+┌────────────────┬──────────────┐
+│ Metric         │ Value        │
+├────────────────┼──────────────┤
+│ Run ID         │ a1b2c3d4     │
+│ Success        │ Yes          │
+│ Source         │ final        │
+│ Iterations     │ 2            │
+│ Total Tokens   │ 3,247        │
+│ Total Cost     │ $0.0162      │
+│ Duration       │ 4,523ms      │
+└────────────────┴──────────────┘
+```
+
+**Verbose output** (adds iteration details table):
+```
+     Iteration Details
+┌───┬────────┬─────────┬───────┬──────────────────────────┐
+│ # │ Tokens │ Cost    │ Tools │ Preview                  │
+├───┼────────┼─────────┼───────┼──────────────────────────┤
+│ 1 │ 1847   │ $0.0092 │ 2     │ Used execute_python...   │
+│ 2 │ 1400   │ $0.0070 │ 1     │ Called FINAL with...     │
+└───┴────────┴─────────┴───────┴──────────────────────────┘
+```
+
+## MCP Tools
+
+Three MCP tools are added to `src/rlm/mcp/server.py` for Claude Desktop/Code integration:
+
+### `rlm_agent_run`
+
+Start an autonomous agent as an async task.
+
+```python
+# Parameters
 {
-  "agent_run_id": "agent_abc123",
-  "task": "Explain how auth and billing interact",
-  "config": {
-    "max_iterations": 10,
-    "max_depth": 3,
-    "token_budget": 50000
-  },
-  "iterations": [
-    {
-      "iteration": 1,
-      "phase": "observe",
-      "tool_calls": [
-        {"tool": "repl_context", "params": {"query": "auth billing"}, "tokens": 2847}
-      ],
-      "tokens_used": 3200,
-      "cost": 0.016
-    },
-    {
-      "iteration": 2,
-      "phase": "act",
-      "tool_calls": [
-        {"tool": "execute_python", "code": "auth_files = grep('auth')\nbilling_files = grep('billing')"},
-        {"tool": "load_document", "params": {"path": "docs/auth.md"}}
-      ],
-      "tokens_used": 4100,
-      "cost": 0.021
-    },
-    {
-      "iteration": 3,
-      "phase": "delegate",
-      "tool_calls": [
-        {"tool": "rlm_sub_complete", "query": "JWT token lifecycle", "sub_tokens": 2500}
-      ],
-      "tokens_used": 5200,
-      "cost": 0.026
-    },
-    {
-      "iteration": 4,
-      "phase": "terminate",
-      "tool_calls": [
-        {"tool": "FINAL", "answer": "Auth and billing interact through..."}
-      ],
-      "tokens_used": 1800,
-      "cost": 0.009
-    }
-  ],
-  "result": {
-    "answer": "Auth and billing interact through...",
-    "iterations": 4,
-    "total_tokens": 14300,
-    "total_cost": 0.072,
-    "forced_termination": false
-  }
+    "task": "string (required) - The task to solve",
+    "max_iterations": "integer (default: 10, max: 50)",
+    "token_budget": "integer (default: 50000)",
+    "cost_limit": "number (default: 2.0, max: 10.0)"
+}
+
+# Returns
+{
+    "run_id": "a1b2c3d4",
+    "status": "running",
+    "task": "What is 2+2?",
+    "config": {"max_iterations": 10, "token_budget": 50000, "cost_limit": 2.0}
 }
 ```
 
-## Usage
+### `rlm_agent_status`
 
-### Python API
+Check the status of a running or completed agent.
 
 ```python
-from rlm import RLM
+# Parameters
+{"run_id": "a1b2c3d4"}
+
+# Returns (running)
+{"run_id": "a1b2c3d4", "status": "running", "elapsed_seconds": 12}
+
+# Returns (completed)
+{
+    "run_id": "a1b2c3d4",
+    "status": "completed",
+    "result": {
+        "answer": "The answer is 4",
+        "answer_source": "final",
+        "iterations": 2,
+        "total_tokens": 3247,
+        "total_cost": 0.0162,
+        "success": true
+    },
+    "elapsed_seconds": 4
+}
+```
+
+### `rlm_agent_cancel`
+
+Cancel a running agent.
+
+```python
+# Parameters
+{"run_id": "a1b2c3d4"}
+
+# Returns
+"Agent run 'a1b2c3d4' cancelled"
+```
+
+### AgentManager
+
+The `AgentManager` class tracks running agents by `run_id`, similar to `SessionManager` for REPL sessions:
+
+```python
+class AgentManager:
+    def start(run_id, task, coro) -> AgentRun  # Starts as asyncio.Task
+    def get(run_id) -> AgentRun | None         # Get by ID
+    def cancel(run_id) -> bool                 # Cancel running agent
+    def list_runs() -> list[dict]              # List all with status
+```
+
+## Python API
+
+```python
+from rlm.core.orchestrator import RLM
 from rlm.agent import AgentRunner, AgentConfig
 
+# Create RLM instance
 rlm = RLM(
     model="claude-sonnet-4-20250514",
-    snipara_api_key="rlm_...",
-    snipara_project_slug="my-project",
-    environment="docker",  # Sandboxed execution
+    environment="docker",
 )
 
+# Configure agent
 config = AgentConfig(
     max_iterations=10,
     token_budget=50000,
@@ -268,67 +418,65 @@ config = AgentConfig(
     auto_context=True,
 )
 
-agent = AgentRunner(rlm, config)
-result = await agent.run(
-    "How does the payment webhook handler validate Stripe signatures, "
-    "and what happens on signature failure?"
+# Run agent
+runner = AgentRunner(rlm, config)
+result = await runner.run(
+    "How does the payment webhook handler validate Stripe signatures?"
 )
 
 print(result.answer)
+print(f"Success: {result.success}")
 print(f"Iterations: {result.iterations}")
 print(f"Cost: ${result.total_cost:.4f}")
-print(f"Tokens: {result.total_tokens}")
+print(f"Tokens: {result.total_tokens:,}")
+
+# Cancel a running agent
+runner.cancel()
+
+# Check status mid-run
+print(runner.status)
 ```
 
-### CLI
+## Tool Set Available to Agent
 
-```bash
-# Run agent from command line
-rlm agent "How does auth work?" \
-    --max-iterations 10 \
-    --budget 50000 \
-    --cost-limit 2.0 \
-    --env docker
+Each iteration, the agent has access to all registered tools:
 
-# View trajectory
-rlm logs --last --format rich
+| Tool | Category | Purpose |
+|------|----------|---------|
+| `execute_python` | REPL | Run code in sandbox |
+| `get_repl_context` | REPL | Read persistent variables |
+| `set_repl_context` | REPL | Write persistent variables |
+| `rlm_context_query` | Snipara | Semantic documentation search |
+| `rlm_search` | Snipara | Regex documentation search |
+| `rlm_shared_context` | Snipara | Team guidelines and best practices |
+| `rlm_remember` | Snipara | Store memories (when `memory_enabled`) |
+| `rlm_recall` | Snipara | Recall memories (when `memory_enabled`) |
+| `rlm_sub_complete` | Sub-LLM | Delegate focused sub-problems |
+| `rlm_batch_complete` | Sub-LLM | Parallel sub-queries |
+| **`FINAL`** | Terminal | Return natural language answer |
+| **`FINAL_VAR`** | Terminal | Return computed REPL variable |
 
-# Visualize agent run
-rlm visualize --agent
+## Exception Hierarchy
+
+```python
+from rlm.core.exceptions import (
+    AgentError,                    # Base agent exception
+    AgentIterationLimitExceeded,   # Iteration limit hit
+    AgentCostLimitExceeded,        # Cost limit hit
+    AgentCancelled,                # Agent was cancelled
+)
 ```
 
-### MCP Server
-
-New MCP tools for Claude Desktop/Code:
-
-```
-Tool: rlm_agent_run
-Parameters:
-  - task: string (required) - The question or task
-  - max_iterations: integer (default: 10)
-  - token_budget: integer (default: 50000)
-  - cost_limit: float (default: 2.0)
-
-Tool: rlm_agent_status
-Parameters:
-  - run_id: string (required)
-Returns: current iteration, tokens used, cost, status
-
-Tool: rlm_agent_cancel
-Parameters:
-  - run_id: string (required)
-```
-
-## Safety and Guardrails
+## Safety Summary
 
 ### Hard Limits (Non-Configurable)
 
 | Limit | Value | Rationale |
 |-------|-------|-----------|
-| Absolute max iterations | 50 | Prevent infinite loops |
-| Absolute max depth | 5 | Prevent recursion bombs |
-| Absolute cost cap | $10 | Prevent billing surprises |
-| Absolute timeout | 600s | Prevent hung agents |
+| Max iterations | 50 | Prevent infinite loops |
+| Max depth | 5 | Prevent recursion bombs |
+| Max cost | $10.00 | Prevent billing surprises |
+| Max timeout | 600s | Prevent hung agents |
 
 ### Configurable Limits
 
@@ -336,142 +484,50 @@ Parameters:
 |-----------|---------|-------|-------------|
 | `max_iterations` | 10 | 1-50 | Observe-think-act cycles |
 | `max_depth` | 3 | 1-5 | Sub-LLM recursion depth |
-| `token_budget` | 50,000 | 1K-500K | Total tokens across all calls |
-| `cost_limit` | $2.00 | $0.01-$10 | Dollar cap for entire run |
-| `timeout_seconds` | 120 | 10-600 | Wall-clock timeout |
+| `token_budget` | 50,000 | any | Total tokens across all calls |
+| `cost_limit` | $2.00 | $0-$10 | Dollar cap for entire run |
+| `timeout_seconds` | 120 | 1-600 | Wall-clock timeout |
+| `tool_budget` | 50 | any | Tool calls across all iterations |
 
-### Graceful Degradation
+## Testing
 
-When limits are hit, the agent doesn't just crash:
+39 tests across 5 test files ensure agent reliability:
 
-1. **Budget exhausted**: Force FINAL with best answer so far + "budget exhausted" note
-2. **Depth limit**: Sub-call returns "summarize with available context" instead of recursing
-3. **Iteration limit**: Force FINAL with accumulated context
-4. **Timeout**: Cancel pending calls, force FINAL with partial results
-5. **Cost limit**: Same as budget exhausted
+### Test Categories
 
-## Testing Strategy
+**Runner tests** (`test_agent_runner.py`):
+- Deterministic replay with mocked backend returning tool calls then FINAL
+- Budget enforcement with low cost_limit → forced termination
+- Iteration limit enforcement → forced termination
+- Timeout handling → forced termination
+- Cancel midway → forced termination
+- FINAL_VAR reads variable from mock REPL context
+- Auto-context injection when Snipara tool available
+- No auto-context when disabled or Snipara unavailable
+- Multiple iterations with tool usage tracking
+- Forced termination includes last action summary
 
-Agent behavior is non-deterministic, so testing requires:
+**Terminal tool tests** (`test_agent_terminal.py`):
+- FINAL sets AgentState correctly
+- FINAL_VAR reads from REPL context
+- FINAL_VAR with missing variable returns error, doesn't terminate
+- Two tools created with correct names
 
-### 1. Deterministic Replay Tests
+**Config tests** (`test_agent_config.py`):
+- Default values correct
+- Hard limit clamping for all four limits
+- Values within limits not clamped
+- Hard limit constants correct
 
-Record agent trajectories and replay with mocked LLM responses:
+**Guardrail tests** (`test_agent_guardrails.py`):
+- Allowed at start
+- Blocked at each limit (iteration, cost, token)
+- Allowed just under all limits
 
-```python
-async def test_agent_finds_auth_docs():
-    # Load recorded trajectory
-    trajectory = load_trajectory("fixtures/auth_query_trajectory.json")
-
-    # Create agent with mocked LLM that replays recorded responses
-    agent = AgentRunner(MockRLM(trajectory), AgentConfig(max_iterations=5))
-    result = await agent.run("How does auth work?")
-
-    assert "JWT" in result.answer
-    assert result.iterations <= 5
-    assert not result.forced_termination
-```
-
-### 2. Property-Based Tests
-
-Test invariants that must hold regardless of LLM behavior:
-
-```python
-async def test_agent_respects_budget():
-    agent = AgentRunner(rlm, AgentConfig(token_budget=1000))
-    result = await agent.run("anything")
-    assert result.total_tokens <= 1500  # Small overflow tolerance
-
-async def test_agent_always_terminates():
-    agent = AgentRunner(rlm, AgentConfig(max_iterations=3, timeout_seconds=30))
-    result = await agent.run("anything")
-    assert result.iterations <= 3
-```
-
-### 3. Integration Tests
-
-End-to-end tests with real LLM and Snipara:
-
-```python
-@pytest.mark.integration
-@pytest.mark.slow
-async def test_agent_e2e():
-    rlm = RLM(model="gpt-4o-mini", snipara_project_slug="test-project")
-    agent = AgentRunner(rlm, AgentConfig(max_iterations=5, cost_limit=0.50))
-    result = await agent.run("What testing framework does this project use?")
-
-    assert result.answer  # Non-empty
-    assert result.total_cost < 0.50
-```
-
-## Prerequisites
-
-| Dependency | Status | Description |
-|------------|--------|-------------|
-| Phase 1: Orchestrator | DONE | `_recursive_complete()`, depth limits |
-| Phase 2: Distribution | DONE | PyPI, CI/CD |
-| Phase 4: Cost Tracking | DONE | Token/cost budgets |
-| Snipara Integration | DONE | Auto-registered tools |
-| Snipara REPL Context Bridge | DONE | `rlm_repl_context` tool |
-| Sub-LLM Orchestration | REQUIRED | `rlm_sub_complete`, `rlm_batch_complete` |
-
-## Configuration
-
-```toml
-# rlm.toml
-[rlm]
-model = "claude-sonnet-4-20250514"
-environment = "docker"
-
-[rlm.agent]
-enabled = true
-max_iterations = 10
-token_budget = 50000
-cost_limit = 2.0
-timeout_seconds = 120
-auto_context = true
-context_budget = 8000
-
-[rlm.agent.terminal]
-# Which terminal tools are available
-final = true        # FINAL("answer")
-final_var = true    # FINAL_VAR("var_name")
-
-[rlm.snipara]
-api_key = "rlm_..."
-project_slug = "my-project"
-```
-
-## File Structure
-
-```
-src/rlm/
-├── agent/
-│   ├── __init__.py          # AgentRunner, AgentConfig, AgentResult
-│   ├── runner.py            # Main agent loop implementation
-│   ├── terminal.py          # FINAL/FINAL_VAR protocol parsing
-│   ├── trajectory.py        # Trajectory logging and replay
-│   └── guardrails.py        # Budget, depth, timeout enforcement
-├── core/
-│   └── orchestrator.py      # Extended with sub-LLM tools
-├── tools/
-│   ├── terminal.py          # FINAL, FINAL_VAR tool definitions
-│   └── sub_llm.py           # rlm_sub_complete, rlm_batch_complete
-└── mcp/
-    └── server.py            # New MCP tools: agent_run, agent_status, agent_cancel
-```
-
-## Visualization
-
-The existing Streamlit trajectory visualizer will be extended to show:
-
-- Agent iteration timeline (observe → think → act → terminate)
-- Token/cost accumulation chart per iteration
-- Sub-LLM call tree (depth visualization)
-- FINAL/FINAL_VAR decision point
-- Tool call frequency heatmap
-
-```bash
-# Launch visualizer for agent runs
-rlm visualize --agent --run-id agent_abc123
-```
+**Prompt tests** (`test_agent_prompts.py`):
+- System prompt contains key instructions
+- Iteration prompt includes task, iteration count, budget
+- Previous actions included in prompt
+- Warning on final iteration
+- No warning before final
+- Previous actions limited to last 5

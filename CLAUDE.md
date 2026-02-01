@@ -42,17 +42,26 @@ src/rlm/
 │   └── litellm.py           # LiteLLM (unified backend for all providers)
 ├── repl/                    # Code execution environments
 │   ├── local.py             # RestrictedPython sandbox
-│   ├── docker.py            # Docker container isolation
+│   ├── docker.py            # Docker container isolation (with resource reporting)
 │   └── wasm.py              # WebAssembly via Pyodide
 ├── mcp/                     # MCP server for Claude Code
-│   ├── server.py            # MCP server implementation
+│   ├── server.py            # MCP server (REPL + agent tools)
 │   └── auth.py              # Snipara OAuth token support
 ├── tools/                   # Tool system
-│   └── registry.py          # Tool registration and lookup
+│   ├── registry.py          # Tool registration and lookup
+│   └── sub_llm.py           # Sub-LLM orchestration tools
+├── agent/                   # Autonomous agent
+│   ├── __init__.py          # Exports AgentRunner, AgentConfig, AgentResult
+│   ├── config.py            # AgentConfig with hard safety limits
+│   ├── result.py            # AgentResult dataclass
+│   ├── runner.py            # Main agent loop
+│   ├── terminal.py          # FINAL/FINAL_VAR protocol
+│   ├── prompts.py           # System and iteration prompts
+│   └── guardrails.py        # Budget/iteration/cost checks
 ├── visualizer/              # Trajectory visualizer
 │   └── app.py               # Streamlit dashboard
 └── cli/                     # CLI commands
-    └── main.py              # Typer CLI app
+    └── main.py              # Typer CLI (run, agent, init, logs, etc.)
 ```
 
 ## MCP Server (Zero API Keys)
@@ -409,6 +418,10 @@ ANTHROPIC_API_KEY=sk-ant-...
 rlm init              # Create rlm.toml
 rlm run "prompt"      # Run completion
 rlm run --env docker  # With Docker isolation
+rlm run --sub-calls   # Enable sub-LLM calls (default)
+rlm run --no-sub-calls  # Disable sub-LLM calls
+rlm agent "task"      # Run autonomous agent
+rlm agent "task" -v   # Verbose with iteration details
 rlm logs              # View trajectories
 rlm visualize         # Launch Streamlit dashboard
 rlm mcp-serve         # Start MCP server
@@ -641,6 +654,11 @@ For this project (rlm-runtime), Snipara is configured with:
 | Update orchestrator | `src/rlm/core/orchestrator.py` |
 | Update model pricing | `src/rlm/core/pricing.py` |
 | Modify result types | `src/rlm/core/types.py` |
+| Modify agent behavior | `src/rlm/agent/runner.py` |
+| Change agent prompts | `src/rlm/agent/prompts.py` |
+| Modify sub-LLM tools | `src/rlm/tools/sub_llm.py` |
+| Change agent limits | `src/rlm/agent/config.py`, `src/rlm/agent/guardrails.py` |
+| Add terminal protocol | `src/rlm/agent/terminal.py` |
 
 ## Future Features (Not Yet Implemented)
 
@@ -836,6 +854,150 @@ pip install dist/rlm_runtime-0.2.0-py3-none-any.whl
 | 2.0.0 | Jan 2025 | Major release: persistent sessions, execution profiles, path security, caching |
 | 0.2.0 | Jan 2025 | Cost tracking, budget enforcement, resource monitoring |
 | 0.1.x | Dec 2024 | Initial release with MCP server |
+
+## Advanced LLM Features (Phase 7)
+
+### Parallel Tool Execution
+
+Execute multiple tool calls concurrently when the LLM returns several in one response:
+
+```python
+options = CompletionOptions(
+    parallel_tools=True,   # Enable parallel execution
+    max_parallel=5,        # Concurrent tool limit (semaphore)
+)
+```
+
+Implementation: When `parallel_tools=True` and `len(tool_calls) > 1`, the orchestrator uses `asyncio.gather()` with `asyncio.Semaphore(max_parallel)` and `return_exceptions=True`. Sequential behavior is preserved when the flag is off.
+
+### Structured Outputs
+
+JSON schema-constrained LLM responses:
+
+```python
+options = CompletionOptions(
+    response_format={
+        "type": "json_schema",
+        "json_schema": {"name": "result", "schema": {"type": "object", ...}}
+    }
+)
+result = await rlm.completion("Extract entities", options=options)
+# result.parsed_output contains the parsed JSON dict
+```
+
+The `response_format` is passed through to LiteLLM's `acompletion()`. The response content is parsed as JSON into `BackendResponse.parsed_output`.
+
+### Multi-Modal Input
+
+Messages support images/audio via list-based content:
+
+```python
+from rlm.core.types import Message
+
+# Text-only (string)
+msg = Message(role="user", content="Hello")
+
+# Multi-modal (list of content blocks)
+msg = Message(role="user", content=[
+    {"type": "text", "text": "What's in this image?"},
+    {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+])
+
+# text_content property extracts text regardless of format
+msg.text_content  # "What's in this image?"
+```
+
+### Agent Memory (via Snipara)
+
+Persistent context across sessions using Snipara's existing memory tools. Gated by `memory_enabled` config:
+
+```python
+# In config
+config.memory_enabled = True  # Register rlm_remember and rlm_recall tools
+```
+
+When enabled, the LLM can use:
+- `rlm_remember` -- Store memories with type (fact/decision/learning/preference/todo/context), scope, category, TTL
+- `rlm_recall` -- Semantic recall by query with relevance scoring
+
+## Sub-LLM Orchestration (Phase 8)
+
+The model can delegate focused sub-problems to fresh LLM calls with their own context and budget.
+
+**Tools**: `rlm_sub_complete` (single sub-call) and `rlm_batch_complete` (parallel sub-calls)
+
+**Budget inheritance**: Sub-calls get `min(requested, remaining * 0.5)` of the parent's remaining budget.
+
+**Configuration**:
+```toml
+[rlm]
+sub_calls_enabled = true
+sub_calls_max_per_turn = 5
+sub_calls_budget_inheritance = 0.5
+sub_calls_max_cost_per_session = 1.0
+```
+
+**CLI flags**: `--sub-calls/--no-sub-calls`, `--max-sub-calls`
+
+See [docs/sub-llm-orchestration.md](docs/sub-llm-orchestration.md) for full specification.
+
+## Autonomous Agent (Phase 9)
+
+Full agent loop: observe → think → act → terminate. The model uses REPL for code execution, Snipara for context/memory, and sub-LLM calls for delegation.
+
+### Quick Start
+
+```python
+from rlm.agent import AgentRunner, AgentConfig
+from rlm.core.orchestrator import RLM
+
+rlm = RLM(model="gpt-4o-mini")
+runner = AgentRunner(rlm, AgentConfig(max_iterations=10, cost_limit=2.0))
+result = await runner.run("What is 2+2?")
+print(result.answer)  # "4"
+```
+
+### CLI
+
+```bash
+rlm agent "What is 2+2?"
+rlm agent "Explain auth system" --model claude-sonnet-4-20250514 --max-iterations 20 --verbose
+rlm agent "Count files" --json
+```
+
+### MCP Tools
+
+- `rlm_agent_run(task, max_iterations, token_budget, cost_limit)` -- Start async agent
+- `rlm_agent_status(run_id)` -- Check status or get result
+- `rlm_agent_cancel(run_id)` -- Cancel running agent
+
+### Termination Protocol
+
+- `FINAL(answer="...")` -- Return natural language answer
+- `FINAL_VAR(variable_name="result")` -- Return computed REPL variable
+
+### Hard Safety Limits
+
+| Limit | Value |
+|-------|-------|
+| Max iterations | 50 |
+| Max cost | $10.00 |
+| Max timeout | 600s |
+| Max depth | 5 |
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/rlm/agent/runner.py` | Main agent loop |
+| `src/rlm/agent/config.py` | Config with hard limit clamping |
+| `src/rlm/agent/terminal.py` | FINAL/FINAL_VAR tools |
+| `src/rlm/agent/prompts.py` | System and iteration prompts |
+| `src/rlm/agent/guardrails.py` | Budget/iteration/cost checks |
+| `src/rlm/agent/result.py` | AgentResult dataclass |
+| `src/rlm/tools/sub_llm.py` | Sub-LLM orchestration tools |
+
+See [docs/autonomous-agent.md](docs/autonomous-agent.md) for full specification.
 
 ## Recent Changes
 

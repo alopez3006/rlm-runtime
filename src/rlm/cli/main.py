@@ -33,6 +33,8 @@ def run(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
     config_file: Path | None = typer.Option(None, "--config", "-c", help="Config file path"),
     json_output: bool = typer.Option(False, "--json", help="Output result as JSON"),
+    sub_calls: bool = typer.Option(True, "--sub-calls/--no-sub-calls", help="Enable sub-LLM calls"),
+    max_sub_calls: int = typer.Option(5, "--max-sub-calls", help="Max sub-calls per turn"),
 ) -> None:
     """Run a recursive completion with the RLM runtime."""
     from rlm.core.config import load_config
@@ -40,6 +42,8 @@ def run(
     from rlm.core.types import CompletionOptions
 
     config = load_config(config_file)
+    config.sub_calls_enabled = sub_calls
+    config.sub_calls_max_per_turn = max_sub_calls
 
     try:
         rlm = RLM(
@@ -84,6 +88,118 @@ def run(
             table.add_row("Duration", f"{result.duration_ms}ms")
             table.add_row("Success", "✓" if result.success else "✗")
             console.print(table)
+
+
+@app.command()
+def agent(
+    task: str = typer.Argument(..., help="The task to solve"),
+    model: str = typer.Option("gpt-4o-mini", "--model", "-m", help="Model to use"),
+    backend: str = typer.Option("litellm", "--backend", "-b", help="Backend provider"),
+    environment: str = typer.Option("local", "--env", "-e", help="REPL environment (local/docker)"),
+    max_iterations: int = typer.Option(10, "--max-iterations", "-i", help="Max agent iterations"),
+    token_budget: int = typer.Option(50000, "--budget", help="Token budget"),
+    cost_limit: float = typer.Option(2.0, "--cost-limit", help="Cost limit in USD"),
+    timeout: int = typer.Option(120, "--timeout", help="Timeout in seconds"),
+    auto_context: bool = typer.Option(
+        True, "--auto-context/--no-auto-context", help="Auto-load Snipara context"
+    ),
+    config_file: Path | None = typer.Option(None, "--config", "-c", help="Config file path"),
+    json_output: bool = typer.Option(False, "--json", help="Output result as JSON"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+) -> None:
+    """Run an autonomous agent that iteratively solves a task.
+
+    The agent loops: observe -> think -> act -> terminate.
+    It uses REPL for code execution, Snipara for context, and
+    sub-LLM calls for delegation. Terminates via FINAL/FINAL_VAR tools.
+    """
+    from rlm.agent.config import AgentConfig
+    from rlm.agent.runner import AgentRunner
+    from rlm.core.config import load_config
+    from rlm.core.orchestrator import RLM
+
+    config = load_config(config_file)
+
+    try:
+        rlm = RLM(
+            backend=backend,
+            model=model,
+            environment=environment,
+            config=config,
+            verbose=verbose,
+        )
+    except ImportError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1) from None
+
+    agent_config = AgentConfig(
+        max_iterations=max_iterations,
+        token_budget=token_budget,
+        cost_limit=cost_limit,
+        timeout_seconds=timeout,
+        auto_context=auto_context,
+        trajectory_log=verbose,
+    )
+
+    runner = AgentRunner(rlm, agent_config)
+
+    if not json_output:
+        with console.status("[bold green]Agent running..."):
+            result = asyncio.run(runner.run(task))
+    else:
+        result = asyncio.run(runner.run(task))
+
+    if json_output:
+        import json
+
+        console.print(json.dumps(result.to_dict(), indent=2))
+    else:
+        # Answer panel
+        border = "green" if result.success else "yellow" if result.forced_termination else "red"
+        title = (
+            "Answer"
+            if result.success
+            else "Answer (forced)"
+            if result.forced_termination
+            else "Error"
+        )
+        console.print(Panel(result.answer, title=title, border_style=border))
+
+        # Summary table
+        console.print()
+        table = Table(title="Agent Summary")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="green")
+        table.add_row("Run ID", result.run_id)
+        table.add_row("Success", "[green]Yes[/green]" if result.success else "[red]No[/red]")
+        table.add_row("Source", result.answer_source)
+        table.add_row("Iterations", str(result.iterations))
+        table.add_row("Total Tokens", f"{result.total_tokens:,}")
+        table.add_row("Total Cost", f"${result.total_cost:.4f}" if result.total_cost else "N/A")
+        table.add_row("Duration", f"{result.duration_ms:,}ms")
+        if result.forced_termination:
+            table.add_row("Forced", "[yellow]Yes[/yellow]")
+        console.print(table)
+
+        # Verbose: iteration details
+        if verbose and result.iteration_summaries:
+            console.print()
+            iter_table = Table(title="Iteration Details")
+            iter_table.add_column("#", style="dim")
+            iter_table.add_column("Tokens", style="yellow")
+            iter_table.add_column("Cost", style="green")
+            iter_table.add_column("Tools", style="cyan")
+            iter_table.add_column("Preview", style="dim", max_width=60)
+
+            for s in result.iteration_summaries:
+                iter_table.add_row(
+                    str(s["iteration"] + 1),
+                    str(s.get("tokens", 0)),
+                    f"${s.get('cost', 0) or 0:.4f}",
+                    str(s.get("tool_calls", 0)),
+                    (s.get("response_preview", "")[:60] or "—"),
+                )
+            console.print(iter_table)
 
 
 @app.command()

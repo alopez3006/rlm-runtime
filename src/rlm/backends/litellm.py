@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -11,6 +12,8 @@ from litellm import acompletion
 
 from rlm.backends.base import BackendResponse, BaseBackend, Tool
 from rlm.core.types import Message, ToolCall
+
+logger = logging.getLogger(__name__)
 
 
 class LiteLLMBackend(BaseBackend):
@@ -157,10 +160,26 @@ class LiteLLMBackend(BaseBackend):
             call_kwargs["tools"] = [t.to_openai_format() for t in tools]
             call_kwargs["tool_choice"] = "auto"
 
+        # Support structured outputs via response_format
+        response_format = kwargs.pop("response_format", None)
+        if response_format is not None:
+            call_kwargs["response_format"] = response_format
+
         response = await acompletion(**call_kwargs)
 
         choice = response.choices[0]
         tool_calls = self._parse_tool_calls(getattr(choice.message, "tool_calls", None))
+
+        # Parse JSON output when response_format was used
+        parsed_output = None
+        if response_format is not None and choice.message.content:
+            try:
+                parsed_output = json.loads(choice.message.content)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Failed to parse structured output as JSON",
+                    extra={"content_preview": choice.message.content[:100]},
+                )
 
         return BackendResponse(
             content=choice.message.content,
@@ -170,6 +189,7 @@ class LiteLLMBackend(BaseBackend):
             finish_reason=choice.finish_reason or "stop",
             model=response.model,
             raw_response=response,
+            parsed_output=parsed_output,
         )
 
     async def stream(

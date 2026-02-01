@@ -98,6 +98,14 @@ class RLMConfig(BaseSettings):
     token_budget: int = 8000
     tool_budget: int = 20
     timeout_seconds: int = 120
+    parallel_tools: bool = False
+    max_parallel: int = 5
+
+    # Sub-LLM Orchestration
+    sub_calls_enabled: bool = True
+    sub_calls_max_per_turn: int = 5
+    sub_calls_budget_inheritance: float = 0.5  # Fraction of parent's remaining budget
+    sub_calls_max_cost_per_session: float = 1.0  # Max dollar cost for sub-calls per session
 
     # Security: File access restrictions
     # Paths that file tools can access. Empty list means current directory only.
@@ -112,6 +120,7 @@ class RLMConfig(BaseSettings):
     snipara_api_key: str | None = Field(default=None, alias="SNIPARA_API_KEY")
     snipara_project_slug: str | None = Field(default=None, alias="SNIPARA_PROJECT_SLUG")
     snipara_base_url: str = "https://snipara.com/api/mcp"
+    memory_enabled: bool = False  # Enable Snipara memory tools (rlm_remember, rlm_recall)
 
     @property
     def snipara_enabled(self) -> bool:

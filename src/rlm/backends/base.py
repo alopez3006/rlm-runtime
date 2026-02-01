@@ -74,6 +74,7 @@ class BackendResponse:
     finish_reason: str = "stop"
     model: str | None = None
     raw_response: Any = None
+    parsed_output: dict[str, Any] | None = None  # Parsed JSON when response_format is used
 
     @property
     def has_tool_calls(self) -> bool:

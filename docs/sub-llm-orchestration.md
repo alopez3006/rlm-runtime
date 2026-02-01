@@ -1,8 +1,8 @@
-# Sub-LLM Orchestration (Phase: Planned)
+# Sub-LLM Orchestration (Phase 8) ✅
 
-## Overview
+## Status: Implemented
 
-Sub-LLM Orchestration enables rlm-runtime to make **recursive LLM calls within a single completion**, allowing the model to spawn focused sub-queries that each get their own context window, depth budget, and token limit. This builds on the existing `_recursive_complete()` infrastructure in the Orchestrator.
+Sub-LLM Orchestration enables rlm-runtime to make **recursive LLM calls within a single completion**, allowing the model to spawn focused sub-queries that each get their own context window, depth budget, and token limit.
 
 The key insight from Alex Zhang's RLM paper: a model working on a complex task should be able to delegate sub-problems to fresh LLM calls with targeted context, rather than trying to hold everything in a single conversation.
 
@@ -42,190 +42,242 @@ The key insight from Alex Zhang's RLM paper: a model working on a complex task s
 └────────────────────────────────────────────────────────────────┘
 ```
 
-## Design Principles
+## Implementation
 
-### 1. User Provides Their Own Keys (BYOK)
+### Source Files
 
-rlm-runtime is a local tool. The user configures their LLM backend (Anthropic, OpenAI, LiteLLM, etc.) with their own API keys. Sub-LLM calls use the same backend and key as the primary call. There is no server-side inference - everything runs client-side.
+| File | Description |
+|------|-------------|
+| `src/rlm/tools/sub_llm.py` | Core implementation: `SubCallLimits`, `SubLLMContext`, `get_sub_llm_tools()` |
+| `src/rlm/core/orchestrator.py` | `extra_tools` pattern, sub-LLM tool integration |
+| `src/rlm/core/config.py` | Configuration fields for sub-call limits |
+| `src/rlm/core/types.py` | `sub_call_type` field on `TrajectoryEvent` |
+| `src/rlm/core/exceptions.py` | `SubCallBudgetExhausted`, `SubCallDepthExceeded`, `SubCallCostExceeded` |
+| `tests/unit/test_sub_llm.py` | 19 comprehensive tests |
 
-### 2. Budget Inheritance with Limits
+### Tools
 
-Each sub-call inherits a fraction of the parent's remaining budget:
+#### `rlm_sub_complete`
 
-```python
-# Parent has 10,000 token budget remaining
-# Sub-call gets at most 50% of remaining budget
-sub_budget = min(requested_budget, parent_remaining * 0.5)
-```
-
-### 3. Depth-Limited Recursion
-
-The existing `max_depth` parameter in the Orchestrator already enforces this. Sub-LLM calls decrement the depth counter:
-
-```python
-# If max_depth=3:
-# Primary call:    depth=0 (can spawn sub-calls)
-# Sub-call:        depth=1 (can spawn sub-sub-calls)
-# Sub-sub-call:    depth=2 (can spawn one more level)
-# Sub-sub-sub-call: depth=3 (max reached, no more sub-calls)
-```
-
-### 4. Cost Tracking
-
-Every sub-call is tracked in the trajectory with full token usage. The cost tracking system (already in Phase 4) aggregates costs across all sub-calls.
-
-## New Tools
-
-### `rlm_sub_complete`
-
-Spawn a sub-LLM call with its own context window.
+Spawn a sub-LLM call with its own context window and budget.
 
 ```python
-Tool: rlm_sub_complete
-Parameters:
-  - query: string (required)
-      The focused question for the sub-call
-  - max_tokens: integer (default: 4000)
-      Token budget for the sub-call's response
-  - system: string (optional)
-      Custom system prompt for the sub-call
-  - tools: array of string (optional)
-      Restrict which tools the sub-call can use
-      Default: inherits parent's tool set
-  - context_query: string (optional)
-      If set, auto-calls Snipara context_query before the sub-LLM
-      starts, injecting relevant docs into the sub-call's context
+# Tool schema
+{
+    "name": "rlm_sub_complete",
+    "parameters": {
+        "query": "string (required) - The focused question",
+        "max_tokens": "integer (default: 4000) - Token budget",
+        "system": "string (optional) - Custom system prompt",
+        "context_query": "string (optional) - Auto-query Snipara for docs"
+    }
+}
 ```
 
-**Example usage by the LLM:**
+**Budget inheritance**: The sub-call gets `min(requested_tokens, parent_remaining * budget_inheritance)` where `budget_inheritance` defaults to `0.5` (50%).
 
+**Auto-context injection**: When `context_query` is set and a Snipara `rlm_context_query` tool is registered, the sub-call automatically fetches relevant documentation and injects it into the system prompt.
+
+**Return value**:
+```json
+{
+    "response": "The answer from the sub-LLM...",
+    "tokens_used": 2847,
+    "cost": 0.0142,
+    "calls": 3
+}
 ```
-I need to understand the auth flow. Let me delegate this.
 
-<tool_call>
-rlm_sub_complete({
-    "query": "Explain the JWT token lifecycle in this codebase",
-    "context_query": "JWT authentication token refresh",
-    "max_tokens": 3000
-})
-</tool_call>
-```
+#### `rlm_batch_complete`
 
-### `rlm_batch_complete`
-
-Spawn multiple sub-LLM calls in parallel.
+Spawn multiple sub-LLM calls in parallel with a shared budget.
 
 ```python
-Tool: rlm_batch_complete
-Parameters:
-  - queries: array of objects
-      Each with: query, max_tokens, context_query (optional)
-  - max_parallel: integer (default: 3)
-      Maximum concurrent sub-calls
-  - total_budget: integer (default: 8000)
-      Total token budget shared across all sub-calls
+# Tool schema
+{
+    "name": "rlm_batch_complete",
+    "parameters": {
+        "queries": [
+            {"query": "How does auth work?", "context_query": "authentication"},
+            {"query": "How does billing work?", "context_query": "billing"},
+            {"query": "How do they interact?"}
+        ],
+        "max_parallel": 3,
+        "total_budget": 8000
+    }
+}
 ```
 
-## Implementation Plan
+**Budget splitting**: `total_budget` is divided evenly across queries. Each query gets `total_budget // len(queries)` tokens.
 
-### Step 1: Expose `_recursive_complete()` as a Tool
+**Parallel execution**: Uses `asyncio.gather()` with `asyncio.Semaphore(max_parallel)`.
 
-The Orchestrator already has `_recursive_complete()` with depth limits and trajectory tracking. Wrap it as a callable tool:
+**Return value**:
+```json
+{
+    "results": [
+        {"query": "How does auth work?", "response": "...", "tokens_used": 2000, "cost": 0.01},
+        {"query": "How does billing work?", "response": "...", "tokens_used": 1800, "cost": 0.009}
+    ]
+}
+```
+
+### `extra_tools` Pattern
+
+Sub-LLM tools are passed to `_recursive_complete()` via the `extra_tools` parameter rather than mutating the shared `ToolRegistry`. This ensures:
+
+- No state leakage between completions
+- Sub-LLM tools are scoped to the specific completion that needs them
+- Thread-safe for concurrent completions
 
 ```python
 # In orchestrator.py
-async def _handle_sub_complete(self, params: dict) -> str:
-    """Handle rlm_sub_complete tool call."""
-    if self._current_depth >= self.max_depth:
-        return "Maximum recursion depth reached. Summarize with available context."
-
-    sub_result = await self._recursive_complete(
-        query=params["query"],
-        system=params.get("system"),
-        max_tokens=min(params.get("max_tokens", 4000), self._remaining_budget * 0.5),
-        depth=self._current_depth + 1,
-        tools=params.get("tools"),
-    )
-
-    return sub_result.response
+async def _recursive_complete(
+    self, ..., extra_tools: list[Tool] | None = None
+) -> RLMResult:
+    # extra_tools checked alongside registry tools during execution
 ```
 
-### Step 2: Auto-Context Injection
-
-If `context_query` is provided and Snipara is configured, automatically query Snipara and inject results into the sub-call's system prompt:
+### Budget Inheritance
 
 ```python
-if params.get("context_query") and self._snipara_client:
-    context = await self._snipara_client.context_query(
-        query=params["context_query"],
-        max_tokens=params.get("context_budget", 3000),
-    )
-    system = f"{system}\n\nRelevant documentation:\n{context}"
+def _calculate_inherited_budget(
+    requested: int,
+    parent_remaining: int,
+    inheritance_factor: float = 0.5,
+) -> int:
+    """Calculate the token budget for a sub-call.
+
+    Returns min(requested, parent_remaining * inheritance_factor).
+    """
+    inherited = int(parent_remaining * inheritance_factor)
+    return min(requested, inherited)
 ```
 
-### Step 3: Parallel Batch Execution
+Example:
+```
+Parent has 10,000 tokens remaining
+Sub-call requests 4,000 tokens
+Inheritance factor: 0.5
 
-For `rlm_batch_complete`, use `asyncio.gather` with semaphore:
-
-```python
-async def _handle_batch_complete(self, params: dict) -> str:
-    sem = asyncio.Semaphore(params.get("max_parallel", 3))
-    budget_per_query = params.get("total_budget", 8000) // len(params["queries"])
-
-    async def run_one(q):
-        async with sem:
-            return await self._handle_sub_complete({
-                **q,
-                "max_tokens": min(q.get("max_tokens", budget_per_query), budget_per_query),
-            })
-
-    results = await asyncio.gather(*[run_one(q) for q in params["queries"]])
-    return "\n\n---\n\n".join(
-        f"## Result for: {q['query']}\n{r}"
-        for q, r in zip(params["queries"], results)
-    )
+Inherited budget = min(4000, 10000 * 0.5) = min(4000, 5000) = 4000
 ```
 
-### Step 4: Cost Guardrails
+### Cost Guardrails
 
 ```python
 @dataclass
 class SubCallLimits:
-    max_depth: int = 3               # Maximum recursion depth
-    max_sub_calls_per_turn: int = 5   # Max sub-calls in one turn
-    max_total_tokens: int = 50000     # Total tokens across all sub-calls
-    max_cost_per_session: float = 1.0 # Dollar cap per session
-    budget_inheritance: float = 0.5   # Fraction of remaining budget per sub-call
+    """Safety limits for sub-LLM orchestration."""
+    enabled: bool = True
+    max_per_turn: int = 5              # Max sub-calls in one LLM turn
+    budget_inheritance: float = 0.5    # Fraction of parent's remaining budget
+    max_cost_per_session: float = 1.0  # Dollar cap across all sub-calls
 ```
 
-## Trajectory Logging
+**Enforcement points**:
+1. **Per-turn limit**: `SubLLMContext.calls_this_turn` tracked and checked before each sub-call
+2. **Session cost**: `SubLLMContext.session_cost` accumulated and checked against `max_cost_per_session`
+3. **Depth limit**: `max_depth` in `CompletionOptions` prevents infinite recursion
+4. **Token budget**: Budget inheritance naturally reduces available tokens at each depth level
 
-Sub-calls are logged as nested entries in the JSONL trajectory:
+### Trajectory Logging
 
-```json
-{
-  "type": "sub_completion",
-  "depth": 1,
-  "parent_turn": 3,
-  "query": "How does JWT auth work?",
-  "context_query": "JWT authentication",
-  "tokens_used": 2847,
-  "cost": 0.0142,
-  "duration_ms": 3200,
-  "tools_called": ["context_query", "execute_python"],
-  "result_tokens": 1523
-}
+Sub-calls are logged with `sub_call_type` in `TrajectoryEvent`:
+
+```python
+@dataclass
+class TrajectoryEvent:
+    # ... existing fields ...
+    sub_call_type: str | None = None  # "sub_complete" or "batch_complete"
 ```
+
+## Configuration
+
+### Python API
+
+```python
+from rlm.core.orchestrator import RLM
+from rlm.core.types import CompletionOptions
+
+rlm = RLM(model="gpt-4o-mini")
+
+# Sub-calls are enabled by default
+result = await rlm.completion(
+    "Analyze this codebase architecture",
+    options=CompletionOptions(
+        max_depth=3,          # Sub-calls can recurse 3 levels
+        token_budget=50000,
+    ),
+)
+```
+
+### Configuration File
+
+```toml
+# rlm.toml
+[rlm]
+sub_calls_enabled = true
+sub_calls_max_per_turn = 5
+sub_calls_budget_inheritance = 0.5
+sub_calls_max_cost_per_session = 1.0
+```
+
+### Environment Variables
+
+```bash
+RLM_SUB_CALLS_ENABLED=true
+RLM_SUB_CALLS_MAX_PER_TURN=5
+RLM_SUB_CALLS_BUDGET_INHERITANCE=0.5
+RLM_SUB_CALLS_MAX_COST_PER_SESSION=1.0
+```
+
+### CLI Flags
+
+```bash
+# Enable/disable sub-calls
+rlm run "Complex query" --sub-calls        # Enabled (default)
+rlm run "Simple query" --no-sub-calls      # Disabled
+
+# Control max sub-calls per turn
+rlm run "Query" --max-sub-calls 10
+```
+
+## Exception Hierarchy
+
+```python
+from rlm.core.exceptions import (
+    SubCallBudgetExhausted,   # Per-turn sub-call limit reached
+    SubCallDepthExceeded,     # Max recursion depth exceeded
+    SubCallCostExceeded,      # Session cost cap exceeded
+)
+```
+
+These exceptions are caught internally and returned as error messages to the LLM, allowing it to adapt its strategy rather than crashing.
 
 ## Safety Considerations
 
 | Risk | Mitigation |
 |------|------------|
-| Runaway recursion | Hard `max_depth` limit (default: 3) |
+| Runaway recursion | Hard `max_depth` limit (configurable, clamped to 5) |
 | Cost explosion | Per-session dollar cap + budget inheritance (50% per level) |
-| Infinite loops | Turn counter with forced termination |
+| Infinite loops | Per-turn call counter with forced termination |
 | Context pollution | Each sub-call gets a fresh conversation history |
 | Prompt injection via docs | Sub-calls inherit parent's safety system prompt |
+
+## Testing
+
+19 tests in `tests/unit/test_sub_llm.py` covering:
+
+- Budget inheritance math (50% of remaining)
+- `SubCallLimits` enforcement (max_per_turn, session cost cap)
+- Mock `rlm.completion()` to verify constrained options
+- Event merging into parent trajectory with adjusted depth
+- Batch parallel execution with budget split
+- Depth limit prevents further sub-calls at max depth
+- Snipara auto-context injection (mock `rlm_context_query` tool)
+- Sub-call tracking (calls_this_turn, session_cost accumulation)
+- Error handling for tool creation without RLM instance
 
 ## Relationship to Snipara
 
@@ -236,39 +288,12 @@ rlm-runtime (client-side, user's keys)
 ├── Manages sub-LLM calls
 ├── Enforces budgets and depth limits
 ├── Logs trajectories
-└── Calls Snipara for context
-    └── Snipara MCP Server (SaaS)
-        ├── context_query → ranked sections
-        ├── repl_context → REPL-ready context
-        ├── load_document → raw file content
-        └── orchestrate → multi-round exploration
+└── Calls Snipara for context (when context_query is set)
+    └── Snipara MCP Server
+        ├── rlm_context_query → ranked documentation sections
+        ├── rlm_search → regex pattern search
+        ├── rlm_remember → store memories
+        └── rlm_recall → semantic memory recall
 ```
 
 Snipara never runs LLM inference. It only provides optimized documentation context that sub-LLM calls consume.
-
-## Prerequisites
-
-- rlm-runtime Phase 1 (Orchestrator with `_recursive_complete()`) -- DONE
-- rlm-runtime Phase 4 (Cost Tracking) -- DONE
-- Snipara MCP tools auto-registration (`_register_snipara_tools()`) -- DONE
-- Snipara `rlm_repl_context` tool (Phase 13) -- DONE
-
-## Configuration
-
-```toml
-# rlm.toml
-[rlm]
-max_depth = 3
-token_budget = 50000
-
-[rlm.sub_calls]
-enabled = true
-max_per_turn = 5
-budget_inheritance = 0.5
-max_cost_per_session = 1.0
-
-[rlm.snipara]
-api_key = "rlm_..."
-project_slug = "my-project"
-auto_context = true  # Auto-query Snipara for sub-calls with context_query
-```
