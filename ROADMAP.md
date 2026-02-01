@@ -118,6 +118,52 @@ Cutting-edge capabilities.
 
 ---
 
+## Phase 8: Sub-LLM Orchestration
+
+**Status: Planned**
+
+Recursive sub-LLM calls within a single completion. The model can delegate focused sub-problems to fresh LLM calls with their own context window and budget. Based on Alex Zhang's RLM paper.
+
+See [docs/sub-llm-orchestration.md](docs/sub-llm-orchestration.md) for full specification.
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| `rlm_sub_complete` tool | ⏳ | Spawn a sub-LLM call with its own context and budget |
+| `rlm_batch_complete` tool | ⏳ | Parallel sub-LLM calls with shared budget |
+| Auto-context injection | ⏳ | Auto-query Snipara for sub-calls with `context_query` parameter |
+| Budget inheritance | ⏳ | Sub-calls get fraction (50%) of parent's remaining budget |
+| Cost guardrails | ⏳ | Per-session dollar cap, max sub-calls per turn, depth limits |
+| Nested trajectory logging | ⏳ | Sub-calls logged as nested entries in JSONL trajectory |
+
+**Prerequisites:** Phase 1 (Orchestrator) ✅, Phase 4 (Cost Tracking) ✅, Snipara integration ✅
+
+---
+
+## Phase 9: Autonomous RLM Agent
+
+**Status: Planned**
+
+Full autonomous agent loop: observe → think → act → terminate. The model explores documentation, writes code, spawns sub-LLM calls, and terminates via FINAL/FINAL_VAR protocol when ready.
+
+See [docs/autonomous-agent.md](docs/autonomous-agent.md) for full specification.
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| `AgentRunner` class | ⏳ | Main agent loop with configurable limits |
+| `FINAL("answer")` protocol | ⏳ | Natural language termination signal |
+| `FINAL_VAR("var")` protocol | ⏳ | Return computed REPL variable as result |
+| Iteration budget | ⏳ | Max observe-think-act cycles (default: 10) |
+| Hard safety limits | ⏳ | Absolute caps: 50 iterations, $10, 600s timeout |
+| Graceful degradation | ⏳ | Force FINAL with best answer when limits hit |
+| `rlm agent` CLI command | ⏳ | Run agent from command line |
+| MCP tools (`agent_run`, `agent_status`, `agent_cancel`) | ⏳ | Agent control via MCP |
+| Trajectory visualizer extension | ⏳ | Agent iteration timeline, cost chart, call tree |
+| Deterministic replay tests | ⏳ | Record and replay agent trajectories for testing |
+
+**Prerequisites:** Phase 8 (Sub-LLM Orchestration), Snipara REPL Context Bridge ✅
+
+---
+
 ## Legend
 
 | Symbol | Meaning |
@@ -134,11 +180,12 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ### Priority Areas
 
-1. **Test Coverage** - Push from 87% to 90%+ coverage
-2. **Docker Resource Reporting** - Report actual CPU/memory usage from containers
-3. **OpenTelemetry Integration** - Distributed tracing for observability
-4. **Tool Development** - Create useful community tools
-5. **Documentation** - Improve guides and examples
+1. **Sub-LLM Orchestration (Phase 8)** - `rlm_sub_complete` and budget inheritance
+2. **Autonomous Agent (Phase 9)** - FINAL/FINAL_VAR protocol and agent loop
+3. **Test Coverage** - Push from 87% to 90%+ coverage
+4. **Docker Resource Reporting** - Report actual CPU/memory usage from containers
+5. **OpenTelemetry Integration** - Distributed tracing for observability
+6. **Documentation** - Improve guides and examples
 
 ### How to Contribute
 

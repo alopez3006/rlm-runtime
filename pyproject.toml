@@ -3,7 +3,7 @@ name = "rlm-runtime"
 version = "2.0.0"
 description = "Recursive Language Model runtime with sandboxed REPL execution"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
 requires-python = ">=3.10"
 authors = [{ name = "Snipara", email = "hello@snipara.com" }]
 keywords = ["llm", "ai", "recursive", "repl", "agents", "mcp"]
@@ -60,6 +60,13 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rlm"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/.github", "/tests"]
+
+[tool.hatch.metadata]
+# Disable license-file auto-detection (causes PyPI upload issues)
+allow-direct-references = true
 
 [tool.ruff]
 line-length = 100
