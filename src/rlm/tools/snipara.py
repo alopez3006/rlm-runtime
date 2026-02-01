@@ -222,9 +222,9 @@ class SniparaClient:
           access token → sent as ``Authorization: Bearer <token>``.
         - Otherwise it's a raw API key → sent as ``x-api-key: <key>``.
 
-        The ``base_url`` of the httpx client is set to ``api_url``
-        (``{base_url}/{project_slug}``), so all requests use ``/`` as
-        the path.
+        The client is created *without* a ``base_url``; callers pass
+        the full ``api_url`` to each request.  This avoids trailing-slash
+        redirects (HTTP 307) that can strip authentication headers.
 
         Returns:
             The shared ``httpx.AsyncClient`` instance.
@@ -240,20 +240,24 @@ class SniparaClient:
                     headers["x-api-key"] = self._auth_header
 
             self._client = httpx.AsyncClient(
-                base_url=self.api_url,
                 headers=headers,
                 timeout=httpx.Timeout(self._timeout),
             )
         return self._client
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
-        """Call a Snipara MCP tool endpoint via HTTP POST.
+        """Call a Snipara MCP tool endpoint via HTTP POST (JSON-RPC 2.0).
 
-        Sends a JSON payload to ``POST {api_url}/`` with the structure::
+        Sends a JSON-RPC payload to ``POST {api_url}`` with the structure::
 
             {
-                "tool": "rlm_context_query",
-                "arguments": {"query": "...", "max_tokens": 4000}
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "rlm_context_query",
+                    "arguments": {"query": "...", "max_tokens": 4000}
+                }
             }
 
         ``None`` values in *arguments* are stripped before sending —
@@ -266,7 +270,8 @@ class SniparaClient:
                 are automatically removed.
 
         Returns:
-            The parsed JSON response from the API.
+            The parsed JSON response from the API.  For tool results
+            containing text content, the text is parsed as JSON.
 
         Raises:
             SniparaAPIError: On any HTTP error (4xx/5xx), timeout,
@@ -280,14 +285,41 @@ class SniparaClient:
         clean_args = {k: v for k, v in arguments.items() if v is not None}
 
         payload = {
-            "tool": tool_name,
-            "arguments": clean_args,
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": clean_args,
+            },
         }
 
         try:
-            response = await client.post("/", json=payload)
+            response = await client.post(self.api_url, json=payload)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+
+            # Parse JSON-RPC response
+            if "error" in data:
+                error_msg = data["error"].get("message", "Unknown error")
+                raise SniparaAPIError(
+                    tool_name=tool_name,
+                    status_code=None,
+                    message=f"JSON-RPC error: {error_msg}",
+                )
+
+            # Extract result — MCP tools return content blocks
+            rpc_result = data.get("result", {})
+            content = rpc_result.get("content", [])
+            if content and content[0].get("type") == "text":
+                import json as _json
+
+                try:
+                    return _json.loads(content[0].get("text", "{}"))
+                except _json.JSONDecodeError:
+                    return content[0].get("text", "")
+
+            return rpc_result
         except httpx.HTTPStatusError as e:
             # Extract a human-readable message from the response body
             status = e.response.status_code

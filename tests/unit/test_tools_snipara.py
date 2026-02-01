@@ -132,10 +132,19 @@ class TestSniparaClientCallTool:
 
     @pytest.mark.asyncio
     async def test_success_returns_json(self, client):
-        """Should return parsed JSON on success."""
+        """Should return parsed JSON from JSON-RPC content block."""
+        import json as _json
+
+        inner = {"sections": [{"title": "Test"}]}
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 200
-        mock_response.json.return_value = {"sections": [{"title": "Test"}]}
+        mock_response.json.return_value = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "content": [{"type": "text", "text": _json.dumps(inner)}],
+            },
+        }
         mock_response.raise_for_status = MagicMock()
 
         mock_http = AsyncMock(spec=httpx.AsyncClient)
@@ -145,15 +154,15 @@ class TestSniparaClientCallTool:
 
         result = await client.call_tool("rlm_context_query", {"query": "test"})
 
-        assert result == {"sections": [{"title": "Test"}]}
+        assert result == inner
         mock_http.post.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_sends_correct_payload(self, client):
-        """Should POST with {tool, arguments} payload."""
+        """Should POST with JSON-RPC 2.0 payload."""
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 200
-        mock_response.json.return_value = {}
+        mock_response.json.return_value = {"jsonrpc": "2.0", "id": 1, "result": {}}
         mock_response.raise_for_status = MagicMock()
 
         mock_http = AsyncMock(spec=httpx.AsyncClient)
@@ -166,8 +175,13 @@ class TestSniparaClientCallTool:
         call_kwargs = mock_http.post.call_args
         payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
         assert payload == {
-            "tool": "rlm_search",
-            "arguments": {"pattern": "error", "max_results": 10},
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "rlm_search",
+                "arguments": {"pattern": "error", "max_results": 10},
+            },
         }
 
     @pytest.mark.asyncio
@@ -175,7 +189,7 @@ class TestSniparaClientCallTool:
         """Should strip None values from arguments."""
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 200
-        mock_response.json.return_value = {}
+        mock_response.json.return_value = {"jsonrpc": "2.0", "id": 1, "result": {}}
         mock_response.raise_for_status = MagicMock()
 
         mock_http = AsyncMock(spec=httpx.AsyncClient)
@@ -190,8 +204,9 @@ class TestSniparaClientCallTool:
 
         call_kwargs = mock_http.post.call_args
         payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
-        assert "filter" not in payload["arguments"]
-        assert payload["arguments"]["limit"] == 50
+        args = payload["params"]["arguments"]
+        assert "filter" not in args
+        assert args["limit"] == 50
 
     @pytest.mark.asyncio
     async def test_http_error_raises_snipara_api_error(self, client):
