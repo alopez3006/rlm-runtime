@@ -191,12 +191,42 @@ class RLM:
             self.tool_registry.register(tool)
 
     def _register_snipara_tools(self) -> None:
-        """Register Snipara tools if snipara-mcp is installed and configured."""
+        """Register Snipara tools, preferring native HTTP client over snipara-mcp.
+
+        Resolution order:
+        1. Native tools via SniparaClient (uses OAuth or API key via auth.py)
+        2. snipara-mcp package import (backward compatibility for API key users)
+        3. Skip with debug log
+        """
+        # --- Attempt 1: Native tools via SniparaClient ---
+        try:
+            from rlm.tools.snipara import SniparaClient, get_native_snipara_tools
+
+            client = SniparaClient.from_config(self.config)
+            if client is not None:
+                tools = get_native_snipara_tools(
+                    client=client,
+                    memory_enabled=self.config.memory_enabled,
+                )
+                for tool in tools:
+                    self.tool_registry.register(tool)
+                logger.info(
+                    "Snipara tools registered (native HTTP)",
+                    count=len(tools),
+                    memory_enabled=self.config.memory_enabled,
+                )
+                return
+        except Exception as e:
+            logger.debug(
+                "Native Snipara tools unavailable, trying snipara-mcp fallback",
+                error=str(e),
+            )
+
+        # --- Attempt 2: snipara-mcp package (backward compatibility) ---
         if not self.config.snipara_enabled:
             logger.debug("Snipara not configured, skipping tool registration")
             return
 
-        # Memory tools that require memory_enabled flag
         memory_tool_names = {"rlm_remember", "rlm_recall", "rlm_memories", "rlm_forget"}
 
         try:
@@ -208,13 +238,12 @@ class RLM:
             )
             registered = 0
             for tool in tools:
-                # Skip memory tools unless memory_enabled
                 if tool.name in memory_tool_names and not self.config.memory_enabled:
                     continue
                 self.tool_registry.register(tool)
                 registered += 1
             logger.info(
-                "Snipara tools registered",
+                "Snipara tools registered (snipara-mcp)",
                 count=registered,
                 memory_enabled=self.config.memory_enabled,
             )

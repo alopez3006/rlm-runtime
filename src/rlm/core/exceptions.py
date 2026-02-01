@@ -319,6 +319,25 @@ class ToolValidationError(ToolError):
         self.arguments = arguments or {}
 
 
+class SniparaAPIError(ToolError):
+    """Raised when a Snipara API call fails.
+
+    Attributes:
+        tool_name: The Snipara tool that failed
+        status_code: HTTP status code (None for connection errors)
+    """
+
+    def __init__(self, tool_name: str, status_code: int | None, message: str):
+        status_str = f" (HTTP {status_code})" if status_code else ""
+        super().__init__(
+            f"Snipara API error for '{tool_name}'{status_str}: {message[:200]}",
+            tool_name=tool_name,
+            status_code=status_code,
+        )
+        self.tool_name = tool_name
+        self.status_code = status_code
+
+
 # Backend Errors
 
 
