@@ -60,7 +60,7 @@ The following env vars influence behaviour (all optional):
 * ``SNIPARA_API_KEY`` — raw API key used when OAuth is unavailable
 * ``SNIPARA_PROJECT_SLUG`` — project slug for URL construction
 * ``RLM_SNIPARA_BASE_URL`` — override the default API base URL
-  (default: ``https://snipara.com/api/mcp``)
+  (default: ``https://api.snipara.com/mcp``)
 * ``RLM_MEMORY_ENABLED`` — set to ``true`` to register Tier 2 memory
   tools
 
@@ -127,14 +127,14 @@ class SniparaClient:
     ::
 
         client = SniparaClient(
-            base_url="https://snipara.com/api/mcp",
+            base_url="https://api.snipara.com/mcp",
             project_slug="my-project",
             auth_header="Bearer eyJ...",
         )
 
     Args:
         base_url: Snipara API base URL.  Trailing slashes are stripped.
-            Default: ``https://snipara.com/api/mcp``.  Override via
+            Default: ``https://api.snipara.com/mcp``.  Override via
             ``RLM_SNIPARA_BASE_URL`` env var or ``snipara_base_url`` in
             ``rlm.toml``.
         project_slug: Snipara project slug used to construct the full
@@ -147,7 +147,7 @@ class SniparaClient:
 
     def __init__(
         self,
-        base_url: str = "https://snipara.com/api/mcp",
+        base_url: str = "https://api.snipara.com/mcp",
         project_slug: str | None = None,
         auth_header: str | None = None,
         timeout: float = 30.0,

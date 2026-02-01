@@ -572,7 +572,7 @@ Tokens stored at `~/.snipara/tokens.json`.
 |----------|---------|---------|
 | `SNIPARA_API_KEY` | Raw API key for authentication | None |
 | `SNIPARA_PROJECT_SLUG` | Project slug for API URL | None |
-| `RLM_SNIPARA_BASE_URL` | Override API base URL | `https://snipara.com/api/mcp` |
+| `RLM_SNIPARA_BASE_URL` | Override API base URL | `https://api.snipara.com/mcp` |
 | `RLM_MEMORY_ENABLED` | Enable Tier 2 memory tools | `false` |
 
 ### Native Snipara Tools Reference

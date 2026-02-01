@@ -109,7 +109,7 @@ class TestSniparaIntegration:
 
         config = RLMConfig()
         url = config.get_snipara_url()
-        assert url == "https://snipara.com/api/mcp/my-project"
+        assert url == "https://api.snipara.com/mcp/my-project"
 
     def test_get_snipara_url_when_disabled(self, monkeypatch):
         """Should return None when disabled."""

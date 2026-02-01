@@ -54,7 +54,7 @@ docker_timeout = 30
 # Snipara Integration (optional)
 snipara_api_key = "rlm_..."
 snipara_project_slug = "my-project"
-snipara_base_url = "https://snipara.com/api/mcp"
+snipara_base_url = "https://api.snipara.com/mcp"
 ```
 
 ## Environment Variables
@@ -190,7 +190,7 @@ rlm = RLM(config=config)
 |--------|------|---------|-------------|
 | `snipara_api_key` | str | None | Snipara API key |
 | `snipara_project_slug` | str | None | Snipara project slug |
-| `snipara_base_url` | str | `"https://snipara.com/api/mcp"` | Snipara API base URL |
+| `snipara_base_url` | str | `"https://api.snipara.com/mcp"` | Snipara API base URL |
 
 ## Per-Project Configuration
 

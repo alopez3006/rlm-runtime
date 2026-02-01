@@ -104,19 +104,19 @@ class TestSniparaClientApiUrl:
 
     def test_constructs_correct_url(self):
         client = SniparaClient(
-            base_url="https://snipara.com/api/mcp",
+            base_url="https://api.snipara.com/mcp",
             project_slug="my-project",
             auth_header="Bearer token",
         )
-        assert client.api_url == "https://snipara.com/api/mcp/my-project"
+        assert client.api_url == "https://api.snipara.com/mcp/my-project"
 
     def test_strips_trailing_slash(self):
         client = SniparaClient(
-            base_url="https://snipara.com/api/mcp/",
+            base_url="https://api.snipara.com/mcp/",
             project_slug="proj",
             auth_header="key",
         )
-        assert client.api_url == "https://snipara.com/api/mcp/proj"
+        assert client.api_url == "https://api.snipara.com/mcp/proj"
 
 
 class TestSniparaClientCallTool:
@@ -125,7 +125,7 @@ class TestSniparaClientCallTool:
     @pytest.fixture
     def client(self):
         return SniparaClient(
-            base_url="https://snipara.com/api/mcp",
+            base_url="https://api.snipara.com/mcp",
             project_slug="test",
             auth_header="Bearer test_token",
         )

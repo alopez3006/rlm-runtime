@@ -119,7 +119,7 @@ class RLMConfig(BaseSettings):
     # Snipara integration (optional)
     snipara_api_key: str | None = Field(default=None, alias="SNIPARA_API_KEY")
     snipara_project_slug: str | None = Field(default=None, alias="SNIPARA_PROJECT_SLUG")
-    snipara_base_url: str = "https://snipara.com/api/mcp"
+    snipara_base_url: str = "https://api.snipara.com/mcp"
     memory_enabled: bool = False  # Enable Snipara memory tools (rlm_remember, rlm_recall)
 
     @property
