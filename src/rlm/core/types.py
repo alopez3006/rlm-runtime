@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 from uuid import UUID
@@ -157,7 +157,7 @@ class TrajectoryEvent:
     output_tokens: int = 0
     duration_ms: int = 0
     error: str | None = None
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     estimated_cost_usd: float | None = None  # Estimated API cost for this event
     sub_call_type: str | None = None  # "sub_complete" or "batch_complete" for sub-LLM calls
 

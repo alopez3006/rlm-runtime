@@ -2,7 +2,7 @@
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from rlm.mcp.auth import (
@@ -106,7 +106,7 @@ class TestGetSniparaToken:
     def test_returns_valid_non_expired_token(self, tmp_path):
         """Should return token that hasn't expired."""
         token_file = tmp_path / "tokens.json"
-        future_time = (datetime.utcnow() + timedelta(hours=1)).isoformat()
+        future_time = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
         token_data = {
             "proj_123": {
                 "access_token": "valid_token",
@@ -123,7 +123,7 @@ class TestGetSniparaToken:
     def test_returns_none_for_expired_token_no_refresh(self, tmp_path):
         """Should return None for expired token when refresh fails."""
         token_file = tmp_path / "tokens.json"
-        past_time = (datetime.utcnow() - timedelta(hours=1)).isoformat()
+        past_time = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         token_data = {
             "proj_123": {
                 "access_token": "expired_token",
@@ -156,7 +156,7 @@ class TestGetSniparaAuth:
     def test_returns_oauth_when_valid_token(self, tmp_path):
         """Should return OAuth auth when valid token exists."""
         token_file = tmp_path / "tokens.json"
-        future_time = (datetime.utcnow() + timedelta(hours=1)).isoformat()
+        future_time = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
         token_data = {
             "proj_123": {
                 "access_token": "oauth_token",
@@ -205,7 +205,7 @@ class TestGetSniparaAuth:
     def test_uses_project_id_fallback(self, tmp_path):
         """Should use project_id from token when project_slug not set."""
         token_file = tmp_path / "tokens.json"
-        future_time = (datetime.utcnow() + timedelta(hours=1)).isoformat()
+        future_time = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
         token_data = {
             "proj_123": {
                 "access_token": "oauth_token",
@@ -241,7 +241,7 @@ class TestGetAuthStatus:
     def test_returns_oauth_authenticated(self, tmp_path):
         """Should show OAuth authentication."""
         token_file = tmp_path / "tokens.json"
-        future_time = (datetime.utcnow() + timedelta(hours=1)).isoformat()
+        future_time = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
         token_data = {
             "proj_123": {
                 "access_token": "token",
@@ -267,7 +267,7 @@ class TestGetAuthStatus:
     def test_shows_expired_token(self, tmp_path):
         """Should show expired OAuth token status."""
         token_file = tmp_path / "tokens.json"
-        past_time = (datetime.utcnow() - timedelta(hours=1)).isoformat()
+        past_time = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         token_data = {
             "proj_123": {
                 "access_token": "expired",

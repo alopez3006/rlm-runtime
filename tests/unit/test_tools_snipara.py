@@ -149,10 +149,9 @@ class TestSniparaClientCallTool:
 
         mock_http = AsyncMock(spec=httpx.AsyncClient)
         mock_http.post.return_value = mock_response
-        mock_http.is_closed = False
-        client._client = mock_http
 
-        result = await client.call_tool("rlm_context_query", {"query": "test"})
+        with patch.object(client, "_get_client", return_value=mock_http):
+            result = await client.call_tool("rlm_context_query", {"query": "test"})
 
         assert result == inner
         mock_http.post.assert_awaited_once()
@@ -167,10 +166,9 @@ class TestSniparaClientCallTool:
 
         mock_http = AsyncMock(spec=httpx.AsyncClient)
         mock_http.post.return_value = mock_response
-        mock_http.is_closed = False
-        client._client = mock_http
 
-        await client.call_tool("rlm_search", {"pattern": "error", "max_results": 10})
+        with patch.object(client, "_get_client", return_value=mock_http):
+            await client.call_tool("rlm_search", {"pattern": "error", "max_results": 10})
 
         call_kwargs = mock_http.post.call_args
         payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
@@ -194,13 +192,12 @@ class TestSniparaClientCallTool:
 
         mock_http = AsyncMock(spec=httpx.AsyncClient)
         mock_http.post.return_value = mock_response
-        mock_http.is_closed = False
-        client._client = mock_http
 
-        await client.call_tool(
-            "rlm_sections",
-            {"filter": None, "limit": 50, "offset": 0},
-        )
+        with patch.object(client, "_get_client", return_value=mock_http):
+            await client.call_tool(
+                "rlm_sections",
+                {"filter": None, "limit": 50, "offset": 0},
+            )
 
         call_kwargs = mock_http.post.call_args
         payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
@@ -222,11 +219,10 @@ class TestSniparaClientCallTool:
 
         mock_http = AsyncMock(spec=httpx.AsyncClient)
         mock_http.post.return_value = mock_response
-        mock_http.is_closed = False
-        client._client = mock_http
 
-        with pytest.raises(SniparaAPIError) as exc_info:
-            await client.call_tool("rlm_context_query", {"query": "test"})
+        with patch.object(client, "_get_client", return_value=mock_http):
+            with pytest.raises(SniparaAPIError) as exc_info:
+                await client.call_tool("rlm_context_query", {"query": "test"})
 
         assert exc_info.value.status_code == 401
         assert exc_info.value.tool_name == "rlm_context_query"
@@ -236,11 +232,10 @@ class TestSniparaClientCallTool:
         """Should raise SniparaAPIError on timeout."""
         mock_http = AsyncMock(spec=httpx.AsyncClient)
         mock_http.post.side_effect = httpx.TimeoutException("timed out")
-        mock_http.is_closed = False
-        client._client = mock_http
 
-        with pytest.raises(SniparaAPIError) as exc_info:
-            await client.call_tool("rlm_search", {"pattern": "test"})
+        with patch.object(client, "_get_client", return_value=mock_http):
+            with pytest.raises(SniparaAPIError) as exc_info:
+                await client.call_tool("rlm_search", {"pattern": "test"})
 
         assert exc_info.value.status_code is None
         assert "timed out" in str(exc_info.value).lower()
@@ -250,11 +245,10 @@ class TestSniparaClientCallTool:
         """Should raise SniparaAPIError on connection failure."""
         mock_http = AsyncMock(spec=httpx.AsyncClient)
         mock_http.post.side_effect = httpx.ConnectError("Connection refused")
-        mock_http.is_closed = False
-        client._client = mock_http
 
-        with pytest.raises(SniparaAPIError) as exc_info:
-            await client.call_tool("rlm_read", {"start_line": 1, "end_line": 10})
+        with patch.object(client, "_get_client", return_value=mock_http):
+            with pytest.raises(SniparaAPIError) as exc_info:
+                await client.call_tool("rlm_read", {"start_line": 1, "end_line": 10})
 
         assert exc_info.value.status_code is None
         assert "rlm_read" in str(exc_info.value)

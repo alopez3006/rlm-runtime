@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -91,7 +91,7 @@ class TrajectoryLogger:
             metadata = {
                 "_type": "trajectory_metadata",
                 "trajectory_id": str(trajectory_id),
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "event_count": len(events),
                 "total_tokens": sum(e.input_tokens + e.output_tokens for e in events),
                 "total_duration_ms": sum(e.duration_ms for e in events),
@@ -187,7 +187,7 @@ class TrajectoryLogger:
             error=data.get("error"),
             timestamp=datetime.fromisoformat(data["timestamp"])
             if data.get("timestamp")
-            else datetime.utcnow(),
+            else datetime.now(UTC),
         )
 
     def list_recent(self, limit: int = 10) -> list[dict[str, Any]]:

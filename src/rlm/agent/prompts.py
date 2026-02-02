@@ -22,6 +22,13 @@ Strategy:
 3. Store intermediate results in REPL variables
 4. Call FINAL or FINAL_VAR when you have the answer
 
+Grounding rules:
+- ONLY state facts verified through tool results (execute_python, rlm_context_query, etc.)
+- If documentation does not contain the answer, say "Not found in documentation"
+- Never invent features, APIs, or details not confirmed by tool output
+- Quote or reference specific tool results when possible
+- Distinguish clearly between computed results and assumptions
+
 Important:
 - Always call FINAL or FINAL_VAR when done - do not just output text
 - If you're running low on iterations, call FINAL with your best answer

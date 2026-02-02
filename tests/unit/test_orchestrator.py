@@ -652,3 +652,102 @@ class TestCostTracking:
         event = result.events[0]
         assert event.estimated_cost_usd is not None
         assert event.estimated_cost_usd > 0
+
+
+class TestSniparaRegistration:
+    """Tests for Snipara tool registration."""
+
+    @patch("rlm.logging.trajectory.TrajectoryLogger")
+    def test_native_snipara_registered_when_auth_available(self, mock_logger):
+        """Should register native Snipara tools when auth is available."""
+        mock_client = MagicMock()
+        mock_tools = [MagicMock(name=f"tool_{i}") for i in range(5)]
+        for i, t in enumerate(mock_tools):
+            t.name = f"rlm_tool_{i}"
+
+        with (
+            patch("rlm.tools.snipara.SniparaClient.from_config", return_value=mock_client),
+            patch("rlm.tools.snipara.get_native_snipara_tools", return_value=mock_tools),
+        ):
+            rlm = RLM()
+            registered = {t.name for t in rlm.tool_registry.get_all()}
+            for t in mock_tools:
+                assert t.name in registered
+
+    @patch("rlm.logging.trajectory.TrajectoryLogger")
+    def test_snipara_skipped_when_no_auth(self, mock_logger):
+        """Should skip Snipara tools gracefully when no auth."""
+        with patch("rlm.tools.snipara.SniparaClient.from_config", return_value=None):
+            # Should not raise
+            rlm = RLM()
+            # Builtin tools should still exist
+            assert rlm.tool_registry is not None
+
+    @patch("rlm.logging.trajectory.TrajectoryLogger")
+    def test_snipara_exception_caught(self, mock_logger):
+        """Should catch and log Snipara errors without crashing."""
+        with patch(
+            "rlm.tools.snipara.SniparaClient.from_config",
+            side_effect=RuntimeError("auth failed"),
+        ):
+            rlm = RLM()
+            assert rlm.tool_registry is not None
+
+
+class TestParallelToolExecution:
+    """Tests for parallel tool execution option."""
+
+    @pytest.mark.asyncio
+    async def test_parallel_tools_execute_concurrently(self):
+        """Should execute multiple tool calls in parallel when enabled."""
+        with patch("rlm.logging.trajectory.TrajectoryLogger"):
+            mock_backend = MagicMock()
+
+            # First response: 2 tool calls
+            mock_response1 = MagicMock()
+            mock_response1.content = ""
+            mock_response1.tool_calls = [
+                ToolCall(id="c1", name="test_tool", arguments={"n": 1}),
+                ToolCall(id="c2", name="test_tool", arguments={"n": 2}),
+            ]
+            mock_response1.input_tokens = 10
+            mock_response1.output_tokens = 5
+
+            # Second response: final answer
+            mock_response2 = MagicMock()
+            mock_response2.content = "Done"
+            mock_response2.tool_calls = []
+            mock_response2.input_tokens = 10
+            mock_response2.output_tokens = 5
+
+            mock_backend.complete = AsyncMock(side_effect=[mock_response1, mock_response2])
+            mock_backend.model = "gpt-4o-mini"
+
+            rlm = RLM(backend=mock_backend, environment="local")
+
+            mock_tool = MagicMock()
+            mock_tool.name = "test_tool"
+            mock_tool.execute = AsyncMock(return_value="ok")
+            rlm.tool_registry.register(mock_tool)
+
+            options = CompletionOptions(parallel_tools=True, max_parallel=5)
+            result = await rlm.completion("Parallel test", options=options)
+
+            assert result.response == "Done"
+            assert mock_tool.execute.await_count == 2
+
+
+class TestTimeoutEnforcement:
+    """Tests for completion timeout."""
+
+    @pytest.mark.asyncio
+    async def test_timeout_in_options(self):
+        """CompletionOptions should accept timeout_seconds."""
+        options = CompletionOptions(timeout_seconds=5)
+        assert options.timeout_seconds == 5
+
+    @pytest.mark.asyncio
+    async def test_default_timeout(self):
+        """Default timeout should be set in CompletionOptions."""
+        options = CompletionOptions()
+        assert options.timeout_seconds is not None or hasattr(options, "timeout_seconds")

@@ -2,7 +2,7 @@
 
 import json
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -41,7 +41,7 @@ def sample_event():
         output_tokens=50,
         duration_ms=500,
         error=None,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(UTC),
     )
 
 
@@ -253,7 +253,7 @@ class TestLoadTrajectory:
                         "input_tokens": 10,
                         "output_tokens": 5,
                         "duration_ms": 100,
-                        "timestamp": datetime.utcnow().isoformat(),
+                        "timestamp": datetime.now(UTC).isoformat(),
                     }
                 )
                 + "\n"

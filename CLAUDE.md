@@ -911,6 +911,7 @@ pip install dist/rlm_runtime-0.2.0-py3-none-any.whl
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.1.0 | Feb 2025 | Quality hardening: anti-hallucination grounding, test coverage 80%→84%, datetime deprecation fixes |
 | 2.0.0 | Jan 2025 | Major release: persistent sessions, execution profiles, path security, caching |
 | 0.2.0 | Jan 2025 | Cost tracking, budget enforcement, resource monitoring |
 | 0.1.x | Dec 2024 | Initial release with MCP server |
@@ -1060,6 +1061,31 @@ rlm agent "Count files" --json
 See [docs/autonomous-agent.md](docs/autonomous-agent.md) for full specification.
 
 ## Recent Changes
+
+### February 2025 (v2.1.0) — Quality Hardening
+
+**Test results:** 608 passed, 0 failed, 84% coverage (up from 566/571 passed, 80% coverage)
+
+- **Anti-Hallucination Grounding**: Added grounding rules to `AGENT_SYSTEM_PROMPT` in `src/rlm/agent/prompts.py`. The agent is now instructed to only state facts verified through tool results, never invent features/APIs, quote specific tool output, and distinguish computed results from assumptions.
+- **Snipara Test Mock Fix**: Fixed 5 failing tests in `tests/unit/test_tools_snipara.py` where mocks were bypassed. Changed from `client._client = mock_http` to `patch.object(client, "_get_client", return_value=mock_http)` because `call_tool()` internally calls `_get_client()` which recreated the httpx client, causing real HTTP requests to `api.snipara.com`.
+- **`datetime.utcnow()` Migration**: Replaced all deprecated `datetime.utcnow()` calls with `datetime.now(UTC)` across 4 files (9+ occurrences): `src/rlm/logging/trajectory.py`, `src/rlm/core/types.py`, `tests/unit/test_mcp_auth.py`, `tests/unit/test_trajectory.py`. This avoids the Python 3.12 deprecation warning and the planned removal in Python 3.14.
+- **MCP Server Test Coverage (42% → 77%)**: Added ~37 new tests in `tests/unit/test_mcp_server.py` covering `SessionManager` (10 tests), `AgentManager` (5 tests), session handler functions (5 tests), and agent handler functions (8 tests).
+- **Orchestrator Test Coverage (74% → 83%)**: Added tests in `tests/unit/test_orchestrator.py` for Snipara tool registration (3 tests), parallel tool execution (1 test), and timeout enforcement (2 tests).
+- **pytest-asyncio Configuration**: Added `asyncio_default_fixture_loop_scope = "function"` to `pyproject.toml` to suppress the pytest-asyncio 0.24+ deprecation warning about implicit fixture loop scope.
+
+**Files modified:**
+
+| File | Change |
+|------|--------|
+| `src/rlm/agent/prompts.py` | Added grounding rules section to `AGENT_SYSTEM_PROMPT` |
+| `src/rlm/logging/trajectory.py` | `datetime.utcnow()` → `datetime.now(UTC)` (2 occurrences) |
+| `src/rlm/core/types.py` | `datetime.utcnow()` → `datetime.now(UTC)` in `TrajectoryEvent` default_factory |
+| `tests/unit/test_tools_snipara.py` | Fixed mock injection in 7 test methods |
+| `tests/unit/test_mcp_auth.py` | `datetime.utcnow()` → `datetime.now(UTC)` (6 occurrences) |
+| `tests/unit/test_trajectory.py` | `datetime.utcnow()` → `datetime.now(UTC)` (2 occurrences) |
+| `tests/unit/test_mcp_server.py` | Added ~37 new tests for SessionManager, AgentManager, handlers |
+| `tests/unit/test_orchestrator.py` | Added 6 new tests for Snipara registration, parallel tools, timeout |
+| `pyproject.toml` | Added `asyncio_default_fixture_loop_scope = "function"` |
 
 ### January 2025 (v2.0.0)
 

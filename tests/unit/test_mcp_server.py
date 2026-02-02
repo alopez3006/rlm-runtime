@@ -1,12 +1,23 @@
 """Tests for MCP server implementation."""
 
+import asyncio
+import json
+import time
+
 import pytest
 from mcp.server import Server
 
 from rlm.mcp.server import (
+    AgentManager,
+    Session,
+    SessionManager,
+    _agent_cancel,
+    _agent_status,
     _clear_repl_context,
+    _destroy_session,
     _execute_python,
     _get_repl_context,
+    _list_sessions,
     _set_repl_context,
     create_server,
 )
@@ -465,3 +476,322 @@ class TestRunServerImport:
         from rlm.mcp.server import run_server
 
         assert callable(run_server)
+
+
+# ---------------------------------------------------------------------------
+# Session & SessionManager tests
+# ---------------------------------------------------------------------------
+
+
+class TestSession:
+    """Tests for Session dataclass."""
+
+    def test_touch_updates_last_access(self):
+        session = Session(id="s1", repl=LocalREPL(timeout=5))
+        old = session.last_access
+        time.sleep(0.01)
+        session.touch()
+        assert session.last_access > old
+
+    def test_is_expired_false_when_fresh(self):
+        session = Session(id="s1", repl=LocalREPL(timeout=5))
+        assert session.is_expired(ttl=60) is False
+
+    def test_is_expired_true_when_old(self):
+        session = Session(id="s1", repl=LocalREPL(timeout=5))
+        session.last_access = time.time() - 100
+        assert session.is_expired(ttl=60) is True
+
+
+class TestSessionManager:
+    """Tests for SessionManager."""
+
+    def test_default_session_exists(self):
+        mgr = SessionManager(ttl=60)
+        assert "default" in [s["id"] for s in mgr.list_sessions()]
+
+    def test_get_or_create_returns_default(self):
+        mgr = SessionManager(ttl=60)
+        session = mgr.get_or_create(None)
+        assert session.id == "default"
+
+    def test_get_or_create_new_session(self):
+        mgr = SessionManager(ttl=60)
+        session = mgr.get_or_create("custom")
+        assert session.id == "custom"
+
+    def test_get_existing_session(self):
+        mgr = SessionManager(ttl=60)
+        mgr.get_or_create("test")
+        found = mgr.get("test")
+        assert found is not None
+        assert found.id == "test"
+
+    def test_get_nonexistent_returns_none(self):
+        mgr = SessionManager(ttl=60)
+        assert mgr.get("nonexistent") is None
+
+    def test_destroy_custom_session(self):
+        mgr = SessionManager(ttl=60)
+        mgr.get_or_create("temp")
+        assert mgr.destroy("temp") is True
+        assert mgr.get("temp") is None
+
+    def test_destroy_nonexistent_returns_false(self):
+        mgr = SessionManager(ttl=60)
+        assert mgr.destroy("nope") is False
+
+    def test_destroy_default_resets_it(self):
+        mgr = SessionManager(ttl=60)
+        session_before = mgr.get("default")
+        session_before.repl.set_context("x", 1)
+        mgr.destroy("default")
+        session_after = mgr.get("default")
+        assert session_after is not None
+        assert session_after.repl.get_context() == {}
+
+    def test_list_sessions_includes_metadata(self):
+        mgr = SessionManager(ttl=60)
+        mgr.get_or_create("s1")
+        sessions = mgr.list_sessions()
+        assert len(sessions) >= 2  # default + s1
+        for s in sessions:
+            assert "id" in s
+            assert "age_seconds" in s
+            assert "idle_seconds" in s
+            assert "context_keys" in s
+
+    def test_cleanup_expired_sessions(self):
+        mgr = SessionManager(ttl=1)  # 1 second TTL
+        mgr.get_or_create("ephemeral")
+        # Force expiry
+        mgr._sessions["ephemeral"].last_access = time.time() - 10
+        mgr._cleanup_expired()
+        assert mgr.get("ephemeral") is None
+        # Default should survive
+        assert mgr.get("default") is not None
+
+
+# ---------------------------------------------------------------------------
+# AgentManager tests
+# ---------------------------------------------------------------------------
+
+
+class TestAgentManager:
+    """Tests for AgentManager."""
+
+    def test_start_and_get(self):
+        mgr = AgentManager()
+
+        async def dummy_task():
+            return "done"
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            run = mgr.start("r1", "test task", dummy_task())
+            assert run.run_id == "r1"
+            assert run.task == "test task"
+            # Let the task complete
+            loop.run_until_complete(run.future)
+
+            found = mgr.get("r1")
+            assert found is not None
+            assert found.result == "done"
+        finally:
+            loop.close()
+
+    def test_get_nonexistent_returns_none(self):
+        mgr = AgentManager()
+        assert mgr.get("nonexistent") is None
+
+    def test_cancel_running_task(self):
+        mgr = AgentManager()
+
+        async def slow_task():
+            await asyncio.sleep(100)
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            run = mgr.start("r2", "slow task", slow_task())
+            assert mgr.cancel("r2") is True
+            # Let the event loop process the cancellation
+            loop.run_until_complete(asyncio.sleep(0))
+            assert run.future.cancelled()
+        finally:
+            loop.close()
+
+    def test_cancel_nonexistent_returns_false(self):
+        mgr = AgentManager()
+        assert mgr.cancel("nope") is False
+
+    def test_list_runs(self):
+        mgr = AgentManager()
+
+        async def quick():
+            return 42
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            mgr.start("a", "task a", quick())
+            mgr.start("b", "task b", quick())
+            loop.run_until_complete(asyncio.sleep(0.05))
+
+            runs = mgr.list_runs()
+            assert len(runs) == 2
+            ids = {r["run_id"] for r in runs}
+            assert ids == {"a", "b"}
+            for r in runs:
+                assert "status" in r
+                assert "elapsed_seconds" in r
+        finally:
+            loop.close()
+
+
+# ---------------------------------------------------------------------------
+# Agent handler function tests
+# ---------------------------------------------------------------------------
+
+
+class TestListSessions:
+    """Tests for _list_sessions handler."""
+
+    @pytest.mark.asyncio
+    async def test_lists_sessions(self):
+        mgr = SessionManager(ttl=60)
+        mgr.get_or_create("work")
+        result = await _list_sessions(mgr)
+        assert not result.isError
+        assert "work" in result.content[0].text
+        assert "default" in result.content[0].text
+
+
+class TestDestroySession:
+    """Tests for _destroy_session handler."""
+
+    @pytest.mark.asyncio
+    async def test_destroy_existing(self):
+        mgr = SessionManager(ttl=60)
+        mgr.get_or_create("temp")
+        result = await _destroy_session(mgr, {"session_id": "temp"})
+        assert not result.isError
+        assert "destroyed" in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_destroy_default_resets(self):
+        mgr = SessionManager(ttl=60)
+        result = await _destroy_session(mgr, {"session_id": "default"})
+        assert not result.isError
+        assert "reset" in result.content[0].text.lower()
+
+    @pytest.mark.asyncio
+    async def test_destroy_nonexistent(self):
+        mgr = SessionManager(ttl=60)
+        result = await _destroy_session(mgr, {"session_id": "nope"})
+        assert result.isError
+        assert "not found" in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_destroy_no_session_id(self):
+        mgr = SessionManager(ttl=60)
+        result = await _destroy_session(mgr, {})
+        assert result.isError
+        assert "No session_id" in result.content[0].text
+
+
+class TestAgentStatusHandler:
+    """Tests for _agent_status handler."""
+
+    @pytest.mark.asyncio
+    async def test_status_no_run_id(self):
+        mgr = AgentManager()
+        result = await _agent_status(mgr, {})
+        assert result.isError
+        assert "No run_id" in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_status_not_found(self):
+        mgr = AgentManager()
+        result = await _agent_status(mgr, {"run_id": "missing"})
+        assert result.isError
+        assert "not found" in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_status_completed(self):
+        mgr = AgentManager()
+
+        async def quick():
+            return "answer"
+
+        run = mgr.start("x", "test", quick())
+        await run.future  # Let it finish
+
+        result = await _agent_status(mgr, {"run_id": "x"})
+        assert not result.isError
+        data = json.loads(result.content[0].text)
+        assert data["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_status_error(self):
+        mgr = AgentManager()
+
+        async def fail():
+            raise ValueError("boom")
+
+        run = mgr.start("e", "fail task", fail())
+        try:
+            await run.future
+        except ValueError:
+            pass
+
+        result = await _agent_status(mgr, {"run_id": "e"})
+        assert not result.isError
+        data = json.loads(result.content[0].text)
+        assert data["status"] == "error"
+        assert "boom" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_status_running(self):
+        mgr = AgentManager()
+
+        async def slow():
+            await asyncio.sleep(100)
+
+        mgr.start("s", "slow task", slow())
+        result = await _agent_status(mgr, {"run_id": "s"})
+        assert not result.isError
+        data = json.loads(result.content[0].text)
+        assert data["status"] == "running"
+        # Cleanup
+        mgr.cancel("s")
+
+
+class TestAgentCancelHandler:
+    """Tests for _agent_cancel handler."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_no_run_id(self):
+        mgr = AgentManager()
+        result = await _agent_cancel(mgr, {})
+        assert result.isError
+
+    @pytest.mark.asyncio
+    async def test_cancel_not_found(self):
+        mgr = AgentManager()
+        result = await _agent_cancel(mgr, {"run_id": "missing"})
+        assert result.isError
+        assert "not found" in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_cancel_running(self):
+        mgr = AgentManager()
+
+        async def slow():
+            await asyncio.sleep(100)
+
+        mgr.start("c", "cancel me", slow())
+        result = await _agent_cancel(mgr, {"run_id": "c"})
+        assert not result.isError
+        assert "cancelled" in result.content[0].text
