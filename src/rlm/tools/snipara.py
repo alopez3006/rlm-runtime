@@ -156,6 +156,7 @@ class SniparaClient:
         self._project_slug = project_slug
         self._auth_header = auth_header
         self._timeout = timeout
+        self._is_oauth = auth_header is not None and auth_header.startswith("Bearer ")
         # Lazy-initialised in _get_client() to avoid event-loop issues
         # when the orchestrator builds tools during synchronous __init__.
         self._client: httpx.AsyncClient | None = None
@@ -210,12 +211,38 @@ class SniparaClient:
         """Full API URL for this project."""
         return f"{self._base_url}/{self._project_slug}"
 
+    def _refresh_oauth_header(self) -> bool:
+        """Re-read OAuth token from ``~/.snipara/tokens.json``.
+
+        Other clients (e.g. the benchmark's ``SniparaClient``) may
+        refresh the token on disk while this process is running.  This
+        method picks up the latest token so that requests don't fail
+        with HTTP 401 after a refresh cycle.
+
+        Returns:
+            ``True`` if the auth header was updated, ``False`` otherwise.
+        """
+        if not self._is_oauth:
+            return False
+        new_header, _ = get_snipara_auth()
+        if new_header and new_header != self._auth_header:
+            self._auth_header = new_header
+            # Force client re-creation with new headers
+            if self._client and not self._client.is_closed:
+                self._client = None
+            return True
+        return False
+
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or lazily create the ``httpx.AsyncClient``.
 
         The client is created on first call (not in ``__init__``) to
         avoid binding to an event loop that may not exist yet when the
         orchestrator is constructing tools synchronously.
+
+        For OAuth tokens, the auth header is re-read from
+        ``~/.snipara/tokens.json`` on each call so that token refreshes
+        performed by other clients are picked up automatically.
 
         Auth header logic:
         - If ``_auth_header`` starts with ``"Bearer "``, it's an OAuth
@@ -229,6 +256,9 @@ class SniparaClient:
         Returns:
             The shared ``httpx.AsyncClient`` instance.
         """
+        # Re-read OAuth token from disk in case another process refreshed it
+        self._refresh_oauth_header()
+
         if self._client is None or self._client.is_closed:
             headers: dict[str, str] = {"Content-Type": "application/json"}
             if self._auth_header:
